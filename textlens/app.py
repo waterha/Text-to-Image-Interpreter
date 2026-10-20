@@ -55,6 +55,7 @@ class Application:
         self.capture = SelectionCapture(self.publish)
         self.tray = Tray(self.publish)
         self.popup = Popup(self.root, self.hide_popup)
+        self.root.protocol("WM_DELETE_WINDOW", self.quit)
         self.apply_capture()
         self.capture.start()
         self.tray.start()
@@ -97,16 +98,22 @@ class Application:
                         else:
                             self.popup.error(content)
                     else:
-                        self.popup.render(content, done=stage == "done")
-                        elapsed = time.perf_counter() - self.generation_started
-                        if self.first_graph_seconds is None:
-                            self.first_graph_seconds = elapsed
-                        if stage == "done":
-                            self.cache[self.cache_key] = (time.monotonic(), content)
-                            self.cache.move_to_end(self.cache_key)
-                            while len(self.cache) > 16:
-                                self.cache.popitem(last=False)
-                            self.popup.status.set(f"首图 {self.first_graph_seconds:.2f}s · AI 完成 {elapsed:.2f}s · 请结合原文核对")
+                        self.popup.render(content, done=stage == "done", complete=lambda result, error, revision=revision, stage=stage: self.publish("rendered", (revision, stage, result, error)))
+            elif kind == "rendered":
+                revision, stage, content, error = payload
+                if revision == self.revision:
+                    if error:
+                        self.publish("model", (revision, "error", error))
+                        continue
+                    elapsed = time.perf_counter() - self.generation_started
+                    if self.first_graph_seconds is None:
+                        self.first_graph_seconds = elapsed
+                    if stage == "done":
+                        self.cache[self.cache_key] = (time.monotonic(), content)
+                        self.cache.move_to_end(self.cache_key)
+                        while len(self.cache) > 16:
+                            self.cache.popitem(last=False)
+                        self.popup.status.set(f"首图 {self.first_graph_seconds:.2f}s · AI 完成 {elapsed:.2f}s · 请结合原文核对")
             elif kind == "test":
                 revision, stage, content = payload
                 if revision == self.test_revision and self.settings_window and stage in ("done", "error"):
@@ -271,6 +278,7 @@ class Application:
             self.test_future.cancel()
         self.capture.stop()
         self.tray.stop()
+        self.popup.shutdown()
         self.executor.shutdown(wait=False, cancel_futures=True)
         self.root.destroy()
 

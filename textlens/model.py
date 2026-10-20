@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit, urlunsplit
 
-from textlens.diagram import DiagramStream, PROMPT, to_svg
+from textlens.mermaid import MermaidStream, PROMPT
 
 
 def endpoint_url(settings):
@@ -131,17 +131,19 @@ class ModelJob:
             request = urllib.request.Request(endpoint_url(self.settings), data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
             deadline = time.monotonic() + self.settings.timeout
             self.check(deadline)
-            stream = DiagramStream()
+            stream = MermaidStream()
+            last_partial = 0
             opener = urllib.request.build_opener(NoRedirect())
             with opener.open(request, timeout=self.settings.timeout) as response:
                 self.response = response
                 for chunk in self.chunks(response, deadline):
                     self.check(deadline)
-                    if stream.feed(chunk) and len(stream.diagram.nodes) >= 2:
-                        self.publish("partial", to_svg(stream.diagram))
+                    if stream.feed(chunk) and time.monotonic() - last_partial >= .12:
+                        self.publish("partial", stream.source)
+                        last_partial = time.monotonic()
                 self.check(deadline)
                 stream.feed("", final=True)
-                self.publish("done", to_svg(stream.diagram))
+                self.publish("done", stream.source)
         except Cancelled:
             pass
         except urllib.error.HTTPError as error:

@@ -1,4 +1,5 @@
 import tkinter as tk
+import queue
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -9,6 +10,7 @@ import win32gui
 
 from textlens.config import FORMATS, Settings
 from textlens.diagram import draw_svg
+from textlens.renderer import MermaidRenderer
 
 
 BACKGROUND = "#f6f9fb"
@@ -38,6 +40,11 @@ class Popup:
         self.svg = ""
         self.bounds = (300, 500, 600, 520)
         self.scale = 1
+        self.render_token = 0
+        self.render_callback = None
+        self.render_done = False
+        self.image = None
+        self.renderer = MermaidRenderer()
         self.status = tk.StringVar(value="")
         self.close = close
         frame = tk.Frame(self.window, background=BACKGROUND, borderwidth=1)
@@ -69,6 +76,7 @@ class Popup:
         self.hwnd = win32gui.GetParent(self.window.winfo_id()) or self.window.winfo_id()
         style = win32gui.GetWindowLong(self.hwnd, win32con.GWL_EXSTYLE)
         win32gui.SetWindowLong(self.hwnd, win32con.GWL_EXSTYLE, style | win32con.WS_EX_TOOLWINDOW | 0x08000000)
+        self.render_poll = self.window.after(30, self.poll_renderer)
 
     def drag_start(self, event):
         self.drag_offset = (event.x_root - self.window.winfo_x(), event.y_root - self.window.winfo_y())
@@ -91,6 +99,8 @@ class Popup:
         win32gui.SetWindowPos(self.hwnd, win32con.HWND_TOPMOST, position_x, position_y, width, height, win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
 
     def loading(self, bounds, provider):
+        self.render_token += 1
+        self.render_callback = None
         self.bounds = bounds
         self.svg = ""
         self.export_button.configure(state="disabled")
@@ -101,22 +111,68 @@ class Popup:
         self.canvas.create_text(350 * self.scale, 130 * self.scale, text="把一段话，变成一张图。", fill=INK, font=("Microsoft YaHei UI", 19, "bold"))
         self.canvas.create_text(350 * self.scale, 184 * self.scale, text="正在识别概念与关系…", fill="#657c88", font=("Microsoft YaHei UI", 11))
 
-    def render(self, svg, done=False):
-        self.svg = svg
-        height = float(ET.fromstring(svg).get("height"))
-        self.layout(height)
-        draw_svg(self.canvas, svg, self.scale)
+    def render(self, content, done=False, complete=None):
+        self.render_token += 1
+        self.render_callback = complete
+        self.render_done = done
+        if isinstance(content, str) and not content.startswith("<svg"):
+            self.layout()
+            self.renderer.submit(self.render_token, content, round(700 * self.scale))
+            return
+        if isinstance(content, dict):
+            self.layout(content["height"] * 700 / content["width"])
+            if content["width"] != round(700 * self.scale):
+                self.renderer.submit(self.render_token, content["source"], round(700 * self.scale))
+                return
+            self.svg = content["svg"]
+            self.image = tk.PhotoImage(data=content["png"])
+            self.canvas.delete("all")
+            self.canvas.configure(scrollregion=(0, 0, content["width"], content["height"]))
+            self.canvas.create_image(0, 0, image=self.image, anchor="nw")
+        else:
+            self.svg = content
+            height = float(ET.fromstring(content).get("height"))
+            self.layout(height)
+            draw_svg(self.canvas, content, self.scale)
         self.export_button.configure(state="normal" if done else "disabled")
         self.status.set("图解已完成  ·  AI 可能有误，请结合原文核对  ·  可拖动标题栏" if done else "正在生成图解…  ·  点击 × 取消")
+        if complete:
+            complete(content, None)
+
+    def poll_renderer(self):
+        try:
+            while True:
+                token, result = self.renderer.results.get_nowait()
+                if token != self.render_token:
+                    continue
+                callback = self.render_callback
+                if result.get("error"):
+                    if callback:
+                        callback(None, result["error"])
+                    else:
+                        self.error(result["error"])
+                else:
+                    self.render(result, self.render_done, callback)
+        except queue.Empty:
+            pass
+        self.render_poll = self.window.after(30, self.poll_renderer)
 
     def error(self, message):
+        self.render_token += 1
+        self.render_callback = None
         self.export_button.configure(state="disabled")
         self.status.set("生成未完成  ·  检查设置后重新选择文本")
         self.canvas.delete("all")
         self.canvas.create_text(350 * self.scale, 150 * self.scale, text=message, width=580 * self.scale, justify="center", fill="#9d4336", font=("Microsoft YaHei UI", 12))
 
     def hide(self):
+        self.render_token += 1
+        self.render_callback = None
         self.window.withdraw()
+
+    def shutdown(self):
+        self.window.after_cancel(self.render_poll)
+        self.renderer.close()
 
     def export(self):
         if not self.svg:
@@ -207,4 +263,4 @@ class SettingsWindow:
 
     def test_result(self, success, message):
         self.test_button.configure(state="normal")
-        self.test_status.set("连接成功 · 模型已返回有效图解，可保存并开始划词。" if success else message)
+        self.test_status.set("连接成功 · 模型返回的 Mermaid 已通过语法白名单校验，可保存并开始划词。" if success else message)

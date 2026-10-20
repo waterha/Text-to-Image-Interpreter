@@ -29,8 +29,10 @@ Windows 后台划词图解工具。选中文字 → 大模型解析概念与关�
 ### 首图加速
 
 - 简单的“某层是……，包括 A、B、C”枚举句先本地生成预览，无需等待模型；浮窗明确标注“本地规则预览，尚未经 AI 核对”。不适用的句子不会套用模板编造图解。
-- AI 在后台继续分析，返回至少两个节点后逐步替换预览。若请求失败，保留标明来源的本地预览，不把它当作 AI 完成结果。
-- 模型先输出精简的节点与连线，再按需补充标题、释义；不等待整段回答结束才画图。保持旧版 JSON 对象输出兼容。
+- AI 在后台继续分析，Mermaid 返回第一条完整关系后逐步替换预览。若请求失败，保留标明来源的本地预览，不把它当作 AI 完成结果。
+- 模型直接输出 Mermaid `flowchart TD/LR`，中文、英文选区均转换为中文图解并保留必要英文术语；不生成完整 SVG。仅处理已完整换行的语句，流式更新最多约每 120 毫秒提交一次，渲染器只保留最新待处理版本，最终结果始终提交。
+- Mermaid.js 在后台隐藏的 WebView2 中提前加载、预热，不打开浏览器、不启动网站或监听 HTTP 端口，也不在运行时下载 CDN。先由 Mermaid.js 生成真实 SVG，再在同一渲染器内生成供原生 Tk 浮窗显示的 PNG 预览；导出仍是矢量 SVG，不是截图文件。
+- 应用启动后的首次预热可能需要数秒，并增加后台内存占用；不是比原生绘图更轻的方案。预热期间本地规则预览仍能显示。相较直接让模型生成 SVG，Mermaid 通常能缩短输出；相较本程序原来的精简 JSON，并不保证更快。
 - 同一文本的成功 AI 结果在内存中复用，最多 16 条、有效期 5 分钟；更换设置或退出程序即清除，不写入磁盘，不跨启动复用。
 - 划词松开后的稳定等待从 180 毫秒缩短至 80 毫秒。浮窗的首图/完成用时从应用取得文本后计算，不包含操作系统选区读取时间。
 
@@ -48,15 +50,25 @@ Windows 后台划词图解工具。选中文字 → 大模型解析概念与关�
 
 也可以填完整请求地址。地址中没有路径时自动使用 `/v1`。本机推理服务可用 `http://127.0.0.1:端口/v1`，无需认证时 API Key 可留空。远程请求必须使用 HTTPS，不跟随重定向。
 
-模型须支持流式文本和逐行 JSON 指令；不需要图像生成能力。模型优先逐行输出精简节点与关系，按需补充标题和释义，程序本地布局为 SVG。上游不流式时兼容普通 JSON 响应，但 AI 结果须等待完整响应。
+模型须支持流式文本并遵循 Mermaid 格式；不需要图像生成能力。旧版逐行 JSON 图解协议不再用于模型输出。上游不流式时仍兼容普通 JSON API 响应，但图解须等待完整响应。模型内容示例：
+
+```mermaid
+flowchart TD
+  storage["存储层 Storage layer"]
+  storage -->|包括| cache["分布式缓存"]
+  storage -->|包括| sql["关系型数据库"]
+  storage -->|包括| nosql["NoSQL 数据库"]
+```
+
+目前仅接受矩形节点、箭头、关系标签和 TD/TB/LR 方向；不支持任意 Mermaid 图类型、子图、样式或交互语句。语法不符合要求会明确报错，不执行模型提供的 HTML、脚本或配置。
 
 ## 三层结构
 
 1. `textlens/capture.py` + `clipboard_capture.py`：后台鼠标状态检测、跨进程 UI Automation 选区、密码框过滤，以及可选的文档复制兼容和剪贴板还原。
-2. `textlens/model.py` + `diagram.py`：请求适配、流式解析、限制模型输出、树形/流程/对比布局、生成安全 SVG。
-3. `textlens/ui.py` + `tray.py` + `app.py`：原生设置、无激活置顶浮窗、托盘、快捷键、取消与新请求隔离。
+2. `textlens/model.py` + `mermaid.py`：上游请求、Mermaid 提示词、完整行增量解析、语法白名单和数量限制。
+3. `renderer.py` + `assets/renderer.js`：预热的 Mermaid.js 本地渲染；`ui.py` + `tray.py` + `app.py`：原生浮窗、SVG 导出、托盘、快捷键、取消和过期结果隔离。`diagram.py` 仅保留本地规则预览、示例及旧结构测试。
 
-只渲染程序自己生成的 SVG 元素，不执行模型返回的 SVG、脚本、HTML 或外部资源。当前布局最多 8 个节点、12 条关系，适合短句和段落，不是无限画布或任意 SVG 浏览器。
+Mermaid 使用 `securityLevel: strict`、纯 SVG 标签、禁止外联的内容安全策略。模型语句通过白名单后重新规范化，再交给 Mermaid；模型不能传入 SVG、HTML、脚本、链接、图片、配置或样式。最多 8 个节点、12 条关系。只有实际渲染成功的结果才进入内存缓存；关闭浮窗或重新划词后丢弃旧结果。
 
 ## 隐私
 
@@ -64,14 +76,19 @@ Windows 后台划词图解工具。选中文字 → 大模型解析概念与关�
 
 ## 源码运行与打包
 
-需要 Windows 10/11、Python 3.11+（建议 64 位）。
+需要 Windows 10/11、Python 3.11+（建议 64 位）及 Microsoft Edge WebView2 Runtime。程序复用系统 Runtime，不捆绑整套 Chromium；缺失时提示安装，不会静默下载。
 
 ```powershell
 python -m pip install -r requirements.txt
 python main.pyw
 python main.pyw --demo
 python selfcheck.py
+python selfcheck.py --renderer
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 日常启动直接双击 `dist\TextLens.exe`，可将此文件复制到桌面或其他目录；启动时不显示控制台，自动解压运行依赖可能需要几秒。配置仍保存在当前 Windows 账户的应用数据目录，不随 EXE 移动。源码运行也可双击 `main.pyw` 或使用 `pythonw main.pyw`。没有内置 API Key，也不自带模型。
+
+`selfcheck.py --renderer` 使用内置测试文本验证真实 WebView2/Mermaid 渲染、SVG/PNG 输出和退出，并报告冷启动及预热后耗时，不调用模型或读取用户文档。Mermaid.js 固定为 11.12.2，来源 npm 官方 `mermaid` 包，随附许可见 `textlens/assets/MERMAID-LICENSE`。
+
+EXE 的独立渲染自检：`dist\TextLens.exe --check-renderer build\renderer-check.json`（先确保输出目录存在）。该模式不读取用户设置、不启动划词、不调用模型或显示窗口，仅写入自检状态和时间。

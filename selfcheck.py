@@ -1,5 +1,7 @@
 import json
+import base64
 import io
+import sys
 import tempfile
 import threading
 import time
@@ -16,6 +18,7 @@ from textlens.capture import SelectionCapture
 from textlens.config import FORMATS, Settings, load_settings, save_settings
 from textlens.diagram import Diagram, DiagramStream, example_diagram, positions, to_svg
 from textlens.model import ModelJob, endpoint_url, request_payload
+from textlens.mermaid import MermaidStream, PROMPT as MERMAID_PROMPT
 from textlens.ui import place_popup
 
 
@@ -62,6 +65,7 @@ def check_fast_application():
          patch("textlens.app.ModelJob") as jobs, patch("textlens.app.save_settings"), \
          patch.object(SelectionCapture, "start"), patch.object(Tray, "start"):
         application = Application()
+        application.popup.render.side_effect = lambda content, done=False, complete=None: complete(content, None) if complete else None
         try:
             started = time.perf_counter()
             application.generate(SAMPLE, (100, 200, 300, 220))
@@ -84,6 +88,9 @@ def check_fast_application():
             application.publish("model", (application.revision, "done", svg))
             application.poll()
             assert len(application.cache) == 1
+            application.publish("rendered", (old_revision, "done", "stale", None))
+            application.poll()
+            assert all(value[1] != "stale" for value in application.cache.values())
             application.generate("这是复杂的因果推导", (300, 400, 500, 420))
             assert jobs.call_count == 2 and "未重复请求" in application.popup.status.set.call_args.args[0]
             assert application.popup.bounds == (300, 400, 500, 420)
@@ -99,6 +106,16 @@ def check_fast_application():
             assert len(application.cache) == 16
             application.save(replace(settings, model="another-model"))
             assert not application.cache
+            application.popup.render.side_effect = None
+            application.generate("不适合本地预览的异步渲染", (0, 0, 100, 20))
+            source = 'flowchart TD\na["开始"]\na --> b["结束"]'
+            application.publish("model", (application.revision, "done", source))
+            application.poll()
+            assert not application.cache
+            application.popup.render.call_args.kwargs["complete"](None, "渲染失败")
+            application.poll()
+            assert not application.cache
+            application.popup.error.assert_called_with("渲染失败")
         finally:
             application.quit()
 
@@ -317,8 +334,7 @@ def check_clipboard_compatibility():
     assert not {"cmd.exe", "powershell.exe", "pwsh.exe", "windowsterminal.exe"} & copying.DOCUMENT_APPS
 
 
-def check_transport(messages):
-    document = "\n".join(json.dumps(message, ensure_ascii=False) for message in messages)
+def check_transport(document):
     received = []
 
     class Handler(BaseHTTPRequestHandler):
@@ -364,6 +380,7 @@ def check_transport(messages):
             _, headers, body = received[-1]
             headers = {name.lower(): value for name, value in headers.items()}
             assert body["model"] == "mock" and body["stream"] is True
+            assert "flowchart" in json.dumps(body, ensure_ascii=False)
             assert (headers.get("x-api-key") or headers.get("authorization")) in ("test-key", "Bearer test-key")
             cancelled = []
             job = ModelJob(settings, "取消请求", lambda *event: cancelled.append(event))
@@ -445,16 +462,115 @@ def main():
     assert place_popup((500, 20, 600, 40), 400, 300, (0, 0, 1920, 1080)) == (350, 52)
     position_x, position_y = place_popup((-1800, 200, -1750, 220), 700, 500, (-1920, 0, 0, 1080))
     assert -1920 <= position_x <= -700 and 0 <= position_y <= 580
-    check_transport(messages)
-    check_transport([["n", "r", "存储层"], ["n", "c", "缓存", "r", "包括"], ["n", "d", "数据库", "r", "包括"]])
+    check_transport('flowchart TD\na["存储层"]\na -->|包括| b["分布式缓存"]\na -->|包括| c["数据库"]\n')
+    check_transport('```mermaid\nflowchart LR\na["存储层"]\na --> b["数据库"]\n```')
     check_capture()
     check_hosted_document_capture()
     check_clipboard_compatibility()
     check_background_lifecycle()
     check_fast_diagrams()
     check_fast_application()
+    check_mermaid_stream()
     print("selfcheck: ok")
 
 
+def check_mermaid_stream():
+    source = 'flowchart TD\na["Storage layer 存储层"]\na -->|包括| b["关系型数据库"]\na --> c["NoSQL"]'
+    stream = MermaidStream()
+    partials = []
+    for character in source:
+        if stream.feed(character):
+            partials.append(stream.source)
+    stream.feed("", final=True)
+    assert len(stream.nodes) == 3 and len(stream.edges) == 2
+    assert partials and "NoSQL" not in partials[0]
+    assert 'n_a -->|包括| n_b' in stream.source
+    assert "英文" in MERMAID_PROMPT
+    incomplete = MermaidStream()
+    assert not incomplete.feed('flowchart TD\na["A"]\na --> b["')
+    rejects(lambda: incomplete.feed("", final=True))
+    for invalid in (
+        'sequenceDiagram\nA->>B: test',
+        'flowchart TD\nclick a "https://example.com"',
+        'flowchart TD\n%%{init: {}}%%',
+        'flowchart TD\na["<img src=x>"]',
+        'flowchart TD\na["A"]\na --> b',
+        'flowchart TD\na["A"]\na["B"]',
+        'flowchart TD\na["A"]\nstyle a fill:red',
+        'flowchart TD\na["A"]\na --> b["B"]; click b callback',
+        'flowchart TD\na["A"]\na --> b["B"]\n' + '\n'.join(f'n{index}["node"]' for index in range(7)),
+        'x' * 12001,
+    ):
+        rejects(lambda invalid=invalid: MermaidStream().feed(invalid, final=True))
+
+
+def check_native_renderer():
+    import tkinter as tk
+    from textlens.ui import Popup
+    from textlens.renderer import MermaidRenderer
+
+    started = time.perf_counter()
+    renderer = MermaidRenderer()
+    try:
+        assert renderer.ready.wait(35), "Renderer did not initialize"
+        assert renderer.error is None, renderer.error
+        cold = time.perf_counter() - started
+        source = 'flowchart TD\na["存储层 Storage layer"]\na -->|包括| b["分布式缓存"]\na -->|包括| c["关系型数据库"]\na -->|包括| d["NoSQL 数据库"]'
+        timings = []
+        for token, direction in enumerate(("TD", "LR", "TD"), 1):
+            started = time.perf_counter()
+            renderer.submit(token, source.replace("flowchart TD", f"flowchart {direction}"), 700)
+            received, result = renderer.results.get(timeout=20)
+            assert received == token and "error" not in result, result
+            assert "存储层" in result["svg"] and "<script" not in result["svg"]
+            ET.fromstring(result["svg"])
+            png = base64.b64decode(result["png"], validate=True)
+            assert png.startswith(b'\x89PNG\r\n\x1a\n')
+            timings.append(round((time.perf_counter() - started) * 1000))
+        Path("build").mkdir(exist_ok=True)
+        Path("build/mermaid-preview.png").write_bytes(png)
+        renderer.submit(4, 'flowchart TD\na["<script>alert(1)</script>"]', 700)
+        received, result = renderer.results.get(timeout=20)
+        assert received == 4 and result.get("error")
+        root = tk.Tk()
+        root.withdraw()
+        with patch("textlens.ui.MermaidRenderer", return_value=renderer), patch.object(Popup, "layout"):
+            popup = Popup(root, lambda: None)
+            try:
+                callbacks = []
+                popup.render(source.replace('flowchart TD', 'flowchart LR'), complete=lambda *result: callbacks.append(("old", result)))
+                popup.render(source, done=True, complete=lambda *result: callbacks.append(("new", result)))
+                deadline = time.monotonic() + 10
+                while not callbacks and time.monotonic() < deadline:
+                    root.update()
+                    time.sleep(.02)
+                assert len(callbacks) == 1 and callbacks[0][0] == "new", callbacks
+                assert callbacks[0][1][1] is None
+                assert popup.image and popup.svg.startswith('<svg')
+                assert popup.export_button.cget("state") == "normal"
+                assert popup.window.state() == "withdrawn"
+                popup.render(source, done=True, complete=lambda *result: callbacks.append(("cancelled", result)))
+                popup.hide()
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
+                    root.update()
+                    time.sleep(.02)
+                assert len(callbacks) == 1
+            finally:
+                popup.shutdown()
+                root.destroy()
+        print(json.dumps({"renderer": "ok", "cold_seconds": round(cold, 2), "warm_ms": timings}))
+    finally:
+        renderer.close()
+        renderer.thread.join(8)
+        assert not renderer.thread.is_alive(), "Renderer did not shut down"
+
+
 if __name__ == "__main__":
-    main()
+    import multiprocessing
+
+    multiprocessing.freeze_support()
+    if "--renderer" in sys.argv:
+        check_native_renderer()
+    else:
+        main()
