@@ -6,6 +6,28 @@ import win32api
 import win32con
 import win32gui
 
+from textlens.icons import icon_bytes
+
+
+def _icon_handle(size=32):
+    """把内存 ICO 写入临时文件后加载；CreateIconFromResourceEx 拒绝这种结构。"""
+    import tempfile
+
+    path = None
+    try:
+        handle = None
+        with tempfile.NamedTemporaryFile(suffix=".ico", delete=False) as file:
+            file.write(icon_bytes(size))
+            path = file.name
+        handle = win32gui.LoadImage(0, path, win32con.IMAGE_ICON, size, size, win32con.LR_LOADFROMFILE)
+        return handle
+    finally:
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
 
 class Tray:
     def __init__(self, publish):
@@ -35,7 +57,7 @@ class Tray:
             window_class.lpfnWndProc = self.handle_message
             atom = win32gui.RegisterClass(window_class)
             self.hwnd = win32gui.CreateWindow(atom, "句意图后台服务", 0, 0, 0, 0, 0, 0, 0, instance, None)
-            self.icon = win32gui.LoadIcon(0, win32con.IDI_APPLICATION)
+            self.icon = _icon_handle(32)
             self.add_icon()
             for identity, letter in ((1, "I"), (2, "V")):
                 try:

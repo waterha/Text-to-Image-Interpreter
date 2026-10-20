@@ -9,10 +9,12 @@ mermaid.initialize({
   fontFamily: '"Microsoft YaHei UI", sans-serif',
   flowchart: { htmlLabels: false, useMaxWidth: false, curve: "linear", padding: 16 },
   themeVariables: {
-    primaryColor: "#e9f2f4", primaryTextColor: "#173442", primaryBorderColor: "#0d766e",
-    lineColor: "#657c88", edgeLabelBackground: "#f6f9fb", fontSize: "16px"
+    primaryColor: "#f1e2d3", primaryTextColor: "#2e2018", primaryBorderColor: "#9c4520",
+    lineColor: "#9c4520", edgeLabelBackground: "#faf3e7", tertiaryColor: "#efe7dc", fontSize: "16px"
   }
 });
+
+const PAPER = "#faf3e7";
 
 window.renderDiagram = async function (source, width = 700) {
   const started = performance.now();
@@ -33,7 +35,7 @@ window.renderDiagram = async function (source, width = 700) {
     const height = Math.max(100, Math.min(2200, Math.ceil(width * bounds[3] / bounds[2])));
     svg.setAttribute("width", String(width));
     svg.setAttribute("height", String(height));
-    svg.setAttribute("style", "background:#f6f9fb");
+    svg.setAttribute("style", `background:${PAPER}`);
     const serialized = new XMLSerializer().serializeToString(svg);
     const image = new Image();
     imageUrl = URL.createObjectURL(new Blob([serialized], { type: "image/svg+xml" }));
@@ -46,7 +48,7 @@ window.renderDiagram = async function (source, width = 700) {
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext("2d");
-    context.fillStyle = "#f6f9fb";
+    context.fillStyle = PAPER;
     context.fillRect(0, 0, width, height);
     context.drawImage(image, 0, 0, width, height);
     return { svg: serialized, png: canvas.toDataURL("image/png").split(",")[1], width, height, render_ms: performance.now() - started };

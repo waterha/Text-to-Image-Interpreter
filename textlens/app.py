@@ -15,6 +15,7 @@ import win32con
 import win32event
 import win32gui
 
+from textlens import theme
 from textlens.capture import SelectionCapture
 from textlens.config import Settings, load_settings, save_settings
 from textlens.diagram import example_diagram, local_preview, to_svg
@@ -31,8 +32,10 @@ class Application:
         self.root = tk.Tk()
         self.root.withdraw()
         self.root.title("句意图")
-        self.root.option_add("*Font", ("Microsoft YaHei UI", 10))
+        self.root.option_add("*Font", theme.font(10))
         ttk.Style().theme_use("vista")
+        self.icon = theme.window_icon(self.root)
+        self.root.iconphoto(True, self.icon)
         self.events = queue.Queue()
         self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="Model")
         self.job, self.future, self.test_job, self.test_future = None, None, None, None

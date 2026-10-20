@@ -1,5 +1,5 @@
-import tkinter as tk
 import queue
+import tkinter as tk
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -8,14 +8,10 @@ import win32api
 import win32con
 import win32gui
 
+from textlens import theme
 from textlens.config import FORMATS, Settings
 from textlens.diagram import draw_svg
 from textlens.renderer import MermaidRenderer
-
-
-BACKGROUND = "#f6f9fb"
-INK = "#173442"
-TEAL = "#0d766e"
 
 
 def place_popup(bounds, width, height, work_area):
@@ -29,6 +25,27 @@ def place_popup(bounds, width, height, work_area):
     return int(position_x), int(position_y)
 
 
+def action_button(parent, text, command, background, foreground, active_background, active_foreground, font, padx=16, pady=8, outline=None):
+    """扁平按钮；悬停换底色，禁用时保持安静。"""
+    button = tk.Button(
+        parent, text=text, command=command, relief="flat", borderwidth=0, highlightthickness=1 if outline else 0,
+        highlightbackground=outline or background, highlightcolor=outline or background,
+        background=background, foreground=foreground, activebackground=active_background, activeforeground=active_foreground,
+        disabledforeground=theme.HANDLE, cursor="hand2", font=font, padx=padx, pady=pady, takefocus=True,
+    )
+
+    def enter(event):
+        if str(button.cget("state")) != "disabled":
+            button.configure(background=active_background, foreground=active_foreground)
+
+    def leave(event):
+        button.configure(background=background, foreground=foreground)
+
+    button.bind("<Enter>", enter)
+    button.bind("<Leave>", leave)
+    return button
+
+
 class Popup:
     def __init__(self, root, close):
         self.window = tk.Toplevel(root)
@@ -36,7 +53,8 @@ class Popup:
         self.window.withdraw()
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
-        self.window.configure(background="#cbdce4")
+        self.window.configure(background=theme.INK)
+        theme.configure_styles(self.window)
         self.svg = ""
         self.bounds = (300, 500, 600, 520)
         self.scale = 1
@@ -47,30 +65,38 @@ class Popup:
         self.renderer = MermaidRenderer()
         self.status = tk.StringVar(value="")
         self.close = close
-        frame = tk.Frame(self.window, background=BACKGROUND, borderwidth=1)
-        frame.pack(fill="both", expand=True, padx=1, pady=1)
-        header = tk.Frame(frame, background="#e9f2f4", height=42)
+        shell = tk.Frame(self.window, background=theme.PAPER)
+        shell.pack(fill="both", expand=True, padx=1, pady=1)
+        tk.Frame(shell, background=theme.ACCENT, height=3).pack(fill="x")
+        header = tk.Frame(shell, background=theme.BAND, height=40)
         header.pack(fill="x")
-        title = tk.Label(header, text="◈  句意图  /  TEXTLENS", foreground=TEAL, background="#e9f2f4", font=("Microsoft YaHei UI", 10, "bold"), padx=14, pady=10)
-        title.pack(side="left")
-        for label, command in (("×", close), ("导出 SVG", self.export)):
-            button = tk.Button(header, text=label, command=command, relief="flat", background="#e9f2f4", foreground=INK, activebackground="#dbe9ed", cursor="hand2", padx=10, takefocus=True)
-            button.pack(side="right", padx=2, pady=5)
-            if label == "导出 SVG":
-                self.export_button = button
-        for widget in (header, title):
+        header.pack_propagate(False)
+        mark = tk.Label(header, text="◈", foreground=theme.ACCENT, background=theme.BAND, font=theme.font(11, "bold"))
+        mark.pack(side="left", padx=(14, 7), pady=9)
+        title = tk.Label(header, text="句意图", foreground=theme.INK, background=theme.BAND, font=theme.font(10, "bold"))
+        title.pack(side="left", pady=9)
+        subtitle = tk.Label(header, text="TEXTLENS", foreground=theme.MUTED, background=theme.BAND, font=theme.font(8))
+        subtitle.pack(side="left", padx=(8, 0), pady=11)
+        self.close_button = action_button(header, "×", close, theme.BAND, theme.MUTED, theme.TINT, theme.ACCENT, theme.font(11), padx=10, pady=1)
+        self.close_button.pack(side="right", padx=(0, 8), pady=6)
+        self.export_button = action_button(header, "导出 SVG", self.export, theme.BAND, theme.ACCENT, theme.TINT, theme.ACCENT, theme.font(9), padx=10, pady=3)
+        self.export_button.pack(side="right", padx=(0, 6), pady=6)
+        for widget in (header, mark, title, subtitle):
             widget.bind("<ButtonPress-1>", self.drag_start)
             widget.bind("<B1-Motion>", self.drag_move)
-        content = tk.Frame(frame, background=BACKGROUND)
+        content = tk.Frame(shell, background=theme.PAPER)
         content.pack(fill="both", expand=True)
-        self.canvas = tk.Canvas(content, background=BACKGROUND, highlightthickness=0, width=700, height=340)
+        self.canvas = tk.Canvas(content, background=theme.PAPER, highlightthickness=0, borderwidth=0, width=700, height=340)
         self.canvas.pack(side="left", fill="both", expand=True)
         scrollbar = ttk.Scrollbar(content, orient="vertical", command=self.canvas.yview)
         scrollbar.pack(side="right", fill="y")
         self.canvas.configure(yscrollcommand=scrollbar.set)
         self.canvas.bind("<MouseWheel>", lambda event: self.canvas.yview_scroll(-int(event.delta / 120), "units"))
-        footer = tk.Label(frame, textvariable=self.status, background=BACKGROUND, foreground="#657c88", anchor="w", padx=14, pady=9, font=("Microsoft YaHei UI", 9))
+        tk.Frame(shell, background=theme.LINE, height=1).pack(fill="x")
+        footer = tk.Frame(shell, background=theme.PAPER)
         footer.pack(fill="x")
+        tk.Label(footer, text="◈", foreground=theme.ACCENT, background=theme.PAPER, font=theme.font(7)).pack(side="left", padx=(14, 7), pady=9)
+        tk.Label(footer, textvariable=self.status, background=theme.PAPER, foreground=theme.MUTED, anchor="w", font=theme.font(9)).pack(side="left", fill="x", expand=True, padx=(0, 14), pady=9)
         self.window.bind("<Escape>", lambda event: close())
         self.window.update_idletasks()
         self.hwnd = win32gui.GetParent(self.window.winfo_id()) or self.window.winfo_id()
@@ -108,8 +134,11 @@ class Popup:
         self.layout()
         self.canvas.delete("all")
         self.canvas.configure(scrollregion=(0, 0, 700 * self.scale, 340 * self.scale))
-        self.canvas.create_text(350 * self.scale, 130 * self.scale, text="把一段话，变成一张图。", fill=INK, font=("Microsoft YaHei UI", 19, "bold"))
-        self.canvas.create_text(350 * self.scale, 184 * self.scale, text="正在识别概念与关系…", fill="#657c88", font=("Microsoft YaHei UI", 11))
+        center, top, radius = 350 * self.scale, 94 * self.scale, 9 * self.scale
+        self.canvas.create_polygon(center, top - radius, center + radius, top, center, top + radius, center - radius, top, fill=theme.ACCENT, outline="")
+        self.canvas.create_text(center, 130 * self.scale, text="把一段话，变成一张图。", fill=theme.INK, font=theme.font(19, "bold"))
+        self.canvas.create_line(center - 26, 160 * self.scale, center + 26, 160 * self.scale, fill=theme.ACCENT, width=2)
+        self.canvas.create_text(center, 186 * self.scale, text="正在识别概念与关系…", fill=theme.MUTED, font=theme.font(11))
 
     def render(self, content, done=False, complete=None):
         self.render_token += 1
@@ -163,7 +192,11 @@ class Popup:
         self.export_button.configure(state="disabled")
         self.status.set("生成未完成  ·  检查设置后重新选择文本")
         self.canvas.delete("all")
-        self.canvas.create_text(350 * self.scale, 150 * self.scale, text=message, width=580 * self.scale, justify="center", fill="#9d4336", font=("Microsoft YaHei UI", 12))
+        center, top = 350 * self.scale, 76 * self.scale
+        width, height = 560 * self.scale, 148 * self.scale
+        self.canvas.create_rectangle(center - width / 2, top, center + width / 2, top + height, fill=theme.TINT, outline=theme.LINE, width=1)
+        self.canvas.create_text(center, top + 32 * self.scale, text="◈  图解未完成", fill=theme.ACCENT, font=theme.font(12, "bold"))
+        self.canvas.create_text(center, top + 78 * self.scale, text=message, width=width - 60 * self.scale, justify="center", fill=theme.INK, font=theme.font(10))
 
     def hide(self):
         self.render_token += 1
@@ -191,49 +224,82 @@ class SettingsWindow:
         self.save_callback, self.test_callback, self.close_callback = save, test, close
         self.window = tk.Toplevel(root)
         self.window.title("句意图 · 设置")
-        self.window.configure(background=BACKGROUND)
+        self.window.configure(background=theme.PAPER)
         self.window.resizable(False, False)
+        theme.configure_styles(self.window)
         self.window.protocol("WM_DELETE_WINDOW", close)
         self.window.bind("<Escape>", lambda event: close())
         self.values = {name: tk.StringVar(value=str(getattr(current, name))) for name in ("provider", "api_format", "endpoint", "api_key", "model", "max_chars", "timeout")}
         self.enabled = tk.BooleanVar(value=current.auto_capture)
         self.copy_fallback = tk.BooleanVar(value=current.copy_fallback)
         self.test_status = tk.StringVar(value="未连接 · 选择格式并填写你的模型服务")
-        body = tk.Frame(self.window, background=BACKGROUND, padx=28, pady=22)
-        body.pack(fill="both", expand=True)
-        tk.Label(body, text="句意图", font=("Microsoft YaHei UI", 25, "bold"), foreground=INK, background=BACKGROUND).grid(row=0, column=0, columnspan=2, sticky="w")
-        tk.Label(body, text="选中一句话，读懂它背后的结构。", foreground="#657c88", background=BACKGROUND, font=("Microsoft YaHei UI", 11)).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 20))
-        tk.Label(body, text="01   模型服务", foreground=TEAL, background=BACKGROUND, font=("Microsoft YaHei UI", 11, "bold")).grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        labels = [("provider", "供应商名称"), ("api_format", "上游格式"), ("endpoint", "API 请求地址"), ("api_key", "API Key"), ("model", "模型 ID")]
-        for row, (name, label) in enumerate(labels, 3):
-            tk.Label(body, text=label, background=BACKGROUND, foreground=INK, anchor="w").grid(row=row, column=0, sticky="w", padx=(0, 18), pady=7)
+        tk.Frame(self.window, background=theme.ACCENT, height=4).pack(fill="x")
+        page = tk.Frame(self.window, background=theme.PAPER, padx=30, pady=20)
+        page.pack(fill="both", expand=True)
+        masthead = tk.Frame(page, background=theme.PAPER)
+        masthead.pack(fill="x", pady=(0, 16))
+        tk.Label(masthead, text="◈", foreground=theme.ACCENT, background=theme.PAPER, font=theme.font(17, "bold")).pack(side="left", padx=(0, 10), pady=(2, 0))
+        heading = tk.Frame(masthead, background=theme.PAPER)
+        heading.pack(side="left")
+        tk.Label(heading, text="句意图", font=theme.font(22, "bold"), foreground=theme.INK, background=theme.PAPER).pack(anchor="w")
+        tk.Label(heading, text="选中一句话，读懂它背后的结构。", foreground=theme.MUTED, background=theme.PAPER, font=theme.font(10)).pack(anchor="w", pady=(3, 0))
+        tk.Label(masthead, text="设置", foreground=theme.ACCENT, background=theme.PAPER, font=theme.font(10, "bold")).pack(side="right", pady=(8, 0))
+        service = self.card(page, "01", "模型服务")
+        fields = tk.Frame(service, background=theme.SURFACE)
+        fields.pack(fill="x")
+        fields.columnconfigure(1, weight=1)
+        for row, (name, label) in enumerate((("provider", "供应商名称"), ("api_format", "上游格式"), ("endpoint", "API 请求地址"), ("api_key", "API Key"), ("model", "模型 ID"))):
+            tk.Label(fields, text=label, background=theme.SURFACE, foreground=theme.INK, anchor="w", font=theme.font(10)).grid(row=row, column=0, sticky="w", padx=(0, 20), pady=5)
             if name == "api_format":
-                field = ttk.Combobox(body, textvariable=self.values[name], values=FORMATS, state="readonly", width=52)
+                field = ttk.Combobox(fields, textvariable=self.values[name], values=FORMATS, state="readonly", width=38, font=theme.font(10))
             else:
-                field = ttk.Entry(body, textvariable=self.values[name], width=55, show="●" if name == "api_key" else "")
-            field.grid(row=row, column=1, sticky="ew", pady=7)
-        tk.Label(body, text="地址可填 https://供应商/v1 或完整接口路径；本机服务允许 HTTP。\nAPI Key 使用 Windows 当前账户加密保存，不写入日志。", justify="left", foreground="#657c88", background=BACKGROUND, font=("Microsoft YaHei UI", 9)).grid(row=8, column=0, columnspan=2, sticky="w", pady=(6, 16))
-        tk.Label(body, text="02   划词与隐私", foreground=TEAL, background=BACKGROUND, font=("Microsoft YaHei UI", 11, "bold")).grid(row=9, column=0, columnspan=2, sticky="w", pady=(0, 6))
-        ttk.Checkbutton(body, text="启用自动划词图解（选中的文字将发送到上述供应商）", variable=self.enabled).grid(row=10, column=0, columnspan=2, sticky="w", pady=6)
-        ttk.Checkbutton(body, text="PDF / 文档兼容划词（读不到时临时 Ctrl+C，并尝试还原剪贴板）", variable=self.copy_fallback).grid(row=11, column=0, columnspan=2, sticky="w", pady=6)
-        limits = tk.Frame(body, background=BACKGROUND)
-        limits.grid(row=12, column=0, columnspan=2, sticky="w", pady=6)
+                field = ttk.Entry(fields, textvariable=self.values[name], width=40, show="●" if name == "api_key" else "", font=theme.font(10))
+            field.grid(row=row, column=1, sticky="ew", pady=5)
+        self.note(service, "地址可填 https://供应商/v1 或完整接口路径；本机服务允许 HTTP。API Key 使用 Windows 当前账户加密保存，不写入日志。", (12, 0))
+        privacy = self.card(page, "02", "划词与隐私")
+        ttk.Checkbutton(privacy, text="启用自动划词图解（选中的文字将发送到上述供应商）", variable=self.enabled, style="Card.TCheckbutton").pack(anchor="w", pady=(0, 5))
+        ttk.Checkbutton(privacy, text="PDF / 文档兼容划词（读不到时临时 Ctrl+C，并尝试还原剪贴板）", variable=self.copy_fallback, style="Card.TCheckbutton").pack(anchor="w")
+        limits = tk.Frame(privacy, background=theme.SURFACE)
+        limits.pack(fill="x", pady=(12, 0))
         for name, label in (("max_chars", "最多字数"), ("timeout", "请求超时 / 秒")):
-            tk.Label(limits, text=label, background=BACKGROUND, foreground=INK).pack(side="left", padx=(0, 8))
-            ttk.Entry(limits, textvariable=self.values[name], width=8).pack(side="left", padx=(0, 24))
-        tk.Label(body, text="默认只读选区；兼容模式支持 WPS/PDF/Word 等文档应用，跳过可识别的密码框。\n临时复制可能进入系统剪贴板历史；无法安全备份时不自动复制。扫描件须先 OCR。\n手动读取选区：Ctrl+Alt+I；任意可复制应用：Ctrl+C 后 Ctrl+Alt+V。\n关闭设置后继续后台运行；图解仅短期缓存在内存。", justify="left", foreground="#657c88", background=BACKGROUND, font=("Microsoft YaHei UI", 9)).grid(row=13, column=0, columnspan=2, sticky="w", pady=(7, 12))
-        tk.Label(body, textvariable=self.test_status, wraplength=570, justify="left", foreground=TEAL, background=BACKGROUND, font=("Microsoft YaHei UI", 9)).grid(row=14, column=0, columnspan=2, sticky="w", pady=(0, 14))
-        actions = tk.Frame(body, background=BACKGROUND)
-        actions.grid(row=15, column=0, columnspan=2, sticky="ew")
-        self.test_button = ttk.Button(actions, text="测试模型连接", command=self.test)
+            tk.Label(limits, text=label, background=theme.SURFACE, foreground=theme.INK, font=theme.font(10)).pack(side="left", padx=(0, 8))
+            ttk.Entry(limits, textvariable=self.values[name], width=8, font=theme.font(10)).pack(side="left", padx=(0, 28))
+        self.note(privacy, "默认只读选区；兼容模式支持 WPS/PDF/Word 等文档应用，跳过可识别的密码框。临时复制可能进入系统剪贴板历史；无法安全备份时不自动复制。扫描件须先 OCR。手动读取选区：Ctrl+Alt+I；任意可复制应用：Ctrl+C 后 Ctrl+Alt+V。关闭设置后继续后台运行；图解仅短期缓存在内存。", (12, 0))
+        status = tk.Frame(page, background=theme.PAPER)
+        status.pack(fill="x", pady=(0, 12))
+        tk.Label(status, text="◈", foreground=theme.ACCENT, background=theme.PAPER, font=theme.font(8)).pack(side="left", padx=(3, 8), pady=(2, 0))
+        tk.Label(status, textvariable=self.test_status, wraplength=540, justify="left", foreground=theme.MUTED, background=theme.PAPER, font=theme.font(9)).pack(side="left", fill="x", expand=True)
+        tk.Frame(page, background=theme.LINE, height=1).pack(fill="x", pady=(0, 14))
+        actions = tk.Frame(page, background=theme.PAPER)
+        actions.pack(fill="x")
+        self.test_button = action_button(actions, "测试模型连接", self.test, theme.SURFACE, theme.ACCENT, theme.BAND, theme.ACCENT_DEEP, theme.font(10), outline=theme.LINE)
         self.test_button.pack(side="left")
-        ttk.Button(actions, text="本地示例", command=demo).pack(side="left", padx=8)
-        ttk.Button(actions, text="保存设置", command=self.save).pack(side="right")
-        ttk.Button(actions, text="取消", command=close).pack(side="right", padx=8)
+        action_button(actions, "本地示例", demo, theme.SURFACE, theme.MUTED, theme.BAND, theme.ACCENT_DEEP, theme.font(10), outline=theme.LINE).pack(side="left", padx=8)
+        action_button(actions, "保存设置", self.save, theme.ACCENT, theme.PAPER, theme.ACCENT_DEEP, theme.PAPER, theme.font(10, "bold"), padx=22).pack(side="right")
+        action_button(actions, "取消", close, theme.SURFACE, theme.INK, theme.BAND, theme.ACCENT_DEEP, theme.font(10), padx=18, outline=theme.LINE).pack(side="right", padx=(0, 10))
         self.window.update_idletasks()
+        width, height = self.window.winfo_reqwidth(), self.window.winfo_reqheight()
+        self.window.geometry(f"+{max(0, (self.window.winfo_screenwidth() - width) // 2)}+{max(0, (self.window.winfo_screenheight() - height) // 3)}")
         self.window.deiconify()
         self.window.lift()
         self.window.focus_force()
+
+    def card(self, parent, index, title):
+        card = tk.Frame(parent, background=theme.SURFACE, highlightthickness=1, highlightbackground=theme.LINE)
+        card.pack(fill="x", pady=(0, 12))
+        inner = tk.Frame(card, background=theme.SURFACE, padx=20, pady=15)
+        inner.pack(fill="both", expand=True)
+        head = tk.Frame(inner, background=theme.SURFACE)
+        head.pack(fill="x")
+        tk.Label(head, text=index, foreground=theme.ACCENT, background=theme.SURFACE, font=theme.font(10, "bold")).pack(side="left", padx=(0, 10))
+        tk.Label(head, text=title, foreground=theme.INK, background=theme.SURFACE, font=theme.font(11, "bold")).pack(side="left")
+        tk.Frame(inner, background=theme.LINE, height=1).pack(fill="x", pady=(8, 12))
+        body = tk.Frame(inner, background=theme.SURFACE)
+        body.pack(fill="both", expand=True)
+        return body
+
+    def note(self, parent, text, pady):
+        tk.Label(parent, text=text, justify="left", wraplength=500, foreground=theme.MUTED, background=theme.SURFACE, font=theme.font(9)).pack(anchor="w", pady=pady)
 
     def read(self):
         values = {name: variable.get().strip() for name, variable in self.values.items()}
