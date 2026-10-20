@@ -10,7 +10,7 @@ import win32api
 import win32gui
 import win32process
 
-from textlens.clipboard_capture import ClipboardCaptureError, copy_selection
+from til.clipboard_capture import ClipboardCaptureError, copy_selection
 
 
 class SelectionCapture:

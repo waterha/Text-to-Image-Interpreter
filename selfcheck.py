@@ -14,12 +14,12 @@ from unittest.mock import DEFAULT, patch
 
 import win32con
 
-from textlens.capture import SelectionCapture
-from textlens.config import FORMATS, Settings, load_settings, save_settings
-from textlens.diagram import Diagram, DiagramStream, example_diagram, positions, to_svg
-from textlens.model import ModelJob, endpoint_url, request_payload
-from textlens.mermaid import MermaidStream, PROMPT as MERMAID_PROMPT
-from textlens.ui import place_popup
+from til.capture import SelectionCapture
+from til.config import FORMATS, Settings, load_settings, save_settings
+from til.diagram import Diagram, DiagramStream, example_diagram, positions, to_svg
+from til.model import ModelJob, endpoint_url, request_payload
+from til.mermaid import MermaidStream, PROMPT as MERMAID_PROMPT
+from til.ui import place_popup
 
 
 def rejects(function):
@@ -31,7 +31,7 @@ def rejects(function):
 
 
 def check_fast_diagrams():
-    from textlens.diagram import local_preview
+    from til.diagram import local_preview
 
     text = "存储层是所有存储系统的集合，包括分布式缓存、关系型数据库、NoSQL数据库等。"
     started = time.perf_counter()
@@ -55,14 +55,14 @@ def check_fast_diagrams():
 
 
 def check_fast_application():
-    from textlens.app import Application, SAMPLE
-    from textlens.tray import Tray
+    from til.app import Application, SAMPLE
+    from til.tray import Tray
 
     settings = Settings(endpoint="https://example.com/v1", model="test")
-    with patch("textlens.app.load_settings", return_value=settings), \
-         patch("textlens.app.tk.Tk"), patch("textlens.app.ttk.Style"), \
-         patch("textlens.app.Popup"), patch("textlens.app.ThreadPoolExecutor"), \
-         patch("textlens.app.ModelJob") as jobs, patch("textlens.app.save_settings"), \
+    with patch("til.app.load_settings", return_value=settings), \
+         patch("til.app.tk.Tk"), patch("til.app.ttk.Style"), \
+         patch("til.app.Popup"), patch("til.app.ThreadPoolExecutor"), \
+         patch("til.app.ModelJob") as jobs, patch("til.app.save_settings"), \
          patch.object(SelectionCapture, "start"), patch.object(Tray, "start"):
         application = Application()
         application.popup.render.side_effect = lambda content, done=False, complete=None: complete(content, None) if complete else None
@@ -121,17 +121,17 @@ def check_fast_application():
 
 
 def check_background_lifecycle():
-    from textlens.app import Application, main as run_application
-    from textlens.tray import Tray
+    from til.app import Application, main as run_application
+    from til.tray import Tray
 
     configured = Settings(endpoint="https://example.com/v1", model="test", auto_capture=True)
     for saved in (Settings(), configured, ValueError("broken configuration")):
-        with patch("textlens.app.load_settings", side_effect=[saved]), \
-             patch("textlens.app.tk.Tk") as root_factory, \
-             patch("textlens.app.ttk.Style"), \
-             patch("textlens.app.Popup"), \
-             patch("textlens.app.SettingsWindow") as settings_factory, \
-             patch("textlens.app.messagebox") as dialogs, \
+        with patch("til.app.load_settings", side_effect=[saved]), \
+             patch("til.app.tk.Tk") as root_factory, \
+             patch("til.app.ttk.Style"), \
+             patch("til.app.Popup"), \
+             patch("til.app.SettingsWindow") as settings_factory, \
+             patch("til.app.messagebox") as dialogs, \
              patch.object(SelectionCapture, "start"), patch.object(Tray, "start"):
             application = Application()
             try:
@@ -157,7 +157,7 @@ def check_background_lifecycle():
                     settings_factory.assert_not_called()
                     application.toggle()
                     settings_factory.assert_not_called()
-                with patch.multiple("textlens.tray.win32gui", CreatePopupMenu=DEFAULT,
+                with patch.multiple("til.tray.win32gui", CreatePopupMenu=DEFAULT,
                                     AppendMenu=DEFAULT, SetForegroundWindow=DEFAULT,
                                     GetCursorPos=DEFAULT, TrackPopupMenu=DEFAULT,
                                     DestroyMenu=DEFAULT, PostMessage=DEFAULT) as native:
@@ -176,11 +176,11 @@ def check_background_lifecycle():
                 application.root.destroy.assert_not_called()
             finally:
                 application.quit()
-    with patch("textlens.app.win32event.CreateMutex", return_value=123), \
-         patch("textlens.app.win32api.GetLastError", return_value=183), \
-         patch("textlens.app.win32api.CloseHandle") as close_handle, \
-         patch("textlens.app.ctypes.windll.user32.MessageBoxW") as dialog, \
-         patch("textlens.app.Application") as application_factory:
+    with patch("til.app.win32event.CreateMutex", return_value=123), \
+         patch("til.app.win32api.GetLastError", return_value=183), \
+         patch("til.app.win32api.CloseHandle") as close_handle, \
+         patch("til.app.ctypes.windll.user32.MessageBoxW") as dialog, \
+         patch("til.app.Application") as application_factory:
         run_application()
         application_factory.assert_not_called()
         dialog.assert_not_called()
@@ -203,7 +203,7 @@ def check_capture():
     automation = SimpleNamespace(GetFocusedElement=lambda: child, ElementFromPoint=lambda point: child, ControlViewWalker=SimpleNamespace(GetParentElement=lambda element: parent))
     module = SimpleNamespace(UIA_TextPatternId=10014, IUIAutomationTextPattern=object())
     capture = SelectionCapture(lambda *event: None)
-    with patch("textlens.capture.win32process.GetWindowThreadProcessId", return_value=(1, process_id)):
+    with patch("til.capture.win32process.GetWindowThreadProcessId", return_value=(1, process_id)):
         text, bounds = capture.read_selection(automation, module, 123, (20, 30))
         assert text == "存储层是存储系统的集合" and bounds == (20, 30, 220, 54)
         child.CurrentIsPassword = True
@@ -224,14 +224,14 @@ def check_hosted_document_capture():
     automation = SimpleNamespace(GetFocusedElement=lambda: document, ElementFromPoint=lambda point: document, ControlViewWalker=SimpleNamespace(GetParentElement=lambda element: None))
     module = SimpleNamespace(UIA_TextPatternId=10014, IUIAutomationTextPattern=object())
     capture = SelectionCapture(lambda *event: None)
-    with patch("textlens.capture.win32process.GetWindowThreadProcessId", side_effect=lambda hwnd: (1, host_process if hwnd == 123 else document_process)), \
-         patch("textlens.capture.win32gui.EnumChildWindows", side_effect=lambda hwnd, callback, context: callback(124, context)):
+    with patch("til.capture.win32process.GetWindowThreadProcessId", side_effect=lambda hwnd: (1, host_process if hwnd == 123 else document_process)), \
+         patch("til.capture.win32gui.EnumChildWindows", side_effect=lambda hwnd, callback, context: callback(124, context)):
         result = capture.read_selection(automation, module, 123, (40, 50))
         assert result and result[0] == "PDF 中选择的文字", "A PDF hosted in a child process must remain readable"
         document.GetCurrentPattern = lambda identity: None
         automation.CompareElements = lambda first, second: first is second
-        with patch("textlens.capture.copy_selection", return_value=("兼容模式文字", (40, 50, 41, 68))) as copied, \
-             patch("textlens.capture.win32gui.GetForegroundWindow", return_value=123):
+        with patch("til.capture.copy_selection", return_value=("兼容模式文字", (40, 50, 41, 68))) as copied, \
+             patch("til.capture.win32gui.GetForegroundWindow", return_value=123):
             assert capture.read_selection(automation, module, 123, (40, 50)) is None
             copied.assert_not_called()
             capture.configure(True, 2000, True)
@@ -246,7 +246,7 @@ def check_hosted_document_capture():
 
 
 def check_clipboard_compatibility():
-    from textlens import clipboard_capture as copying
+    from til import clipboard_capture as copying
 
     unicode_format, rich_format = win32con.CF_UNICODETEXT, 0xC001
     for case in ("success", "unchanged", "foreign", "cancelled", "unsupported", "oversized", "later_change", "busy", "empty", "delayed_render"):
@@ -506,8 +506,8 @@ def check_mermaid_stream():
 
 def check_native_renderer():
     import tkinter as tk
-    from textlens.ui import Popup
-    from textlens.renderer import MermaidRenderer
+    from til.ui import Popup
+    from til.renderer import MermaidRenderer
 
     started = time.perf_counter()
     renderer = MermaidRenderer()
@@ -534,7 +534,7 @@ def check_native_renderer():
         assert received == 4 and result.get("error")
         root = tk.Tk()
         root.withdraw()
-        with patch("textlens.ui.MermaidRenderer", return_value=renderer), patch.object(Popup, "layout"):
+        with patch("til.ui.MermaidRenderer", return_value=renderer), patch.object(Popup, "layout"):
             popup = Popup(root, lambda: None)
             try:
                 callbacks = []

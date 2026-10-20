@@ -9,8 +9,9 @@ import win32crypt
 
 
 FORMATS = ("OpenAI Chat Completions", "OpenAI Responses", "Anthropic Messages")
-CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "TextLens"
+CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "TIL"
 CONFIG_PATH = CONFIG_DIR / "settings.json"
+LEGACY_CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / "TextLens"
 
 
 @dataclass
@@ -43,7 +44,13 @@ class Settings:
             raise ValueError("API Key 不能包含换行。")
 
 
-def load_settings(path=CONFIG_PATH):
+def load_settings(path=None):
+    path = CONFIG_PATH if path is None else path
+    # 改名前的配置在 %APPDATA%\TextLens 下；新目录还没有配置时沿用旧文件，用户不必重填。
+    if not path.exists() and path == CONFIG_PATH:
+        legacy = LEGACY_CONFIG_DIR / "settings.json"
+        if legacy.exists():
+            path = legacy
     if not path.exists():
         return Settings()
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -56,11 +63,12 @@ def load_settings(path=CONFIG_PATH):
     return settings
 
 
-def save_settings(settings, path=CONFIG_PATH):
+def save_settings(settings, path=None):
+    path = CONFIG_PATH if path is None else path
     settings.validate()
     data = asdict(settings)
     secret = data.pop("api_key")
-    data["encrypted_api_key"] = base64.b64encode(win32crypt.CryptProtectData(secret.encode("utf-8"), "TextLens API Key", None, None, None, 1)).decode("ascii")
+    data["encrypted_api_key"] = base64.b64encode(win32crypt.CryptProtectData(secret.encode("utf-8"), "TIL API Key", None, None, None, 1)).decode("ascii")
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -1,11 +1,11 @@
-# 句意图 · TextLens
+# TIL · Text to Image Interpreter
 
 Windows 后台划词图解工具。选中文字 → 大模型解析概念与关系 → 实时生成 SVG → 在选区上方展示。不是网站，不启动本地 Web 服务，也不捆绑浏览器。
 
 ## 使用
 
-1. 双击单文件版 `dist\TextLens.exe`；无需安装 Python，也不需要携带依赖文件夹。程序只驻留系统托盘，不显示主窗口，首次运行也不弹出设置。
-2. 在任务栏右下角（图标可能在“显示隐藏的图标”中）右键句意图图标 →“设置…”，填写供应商名称、上游格式、API 请求地址、API Key 和模型 ID。
+1. 双击单文件版 `dist\TIL.exe`；无需安装 Python，也不需要携带依赖文件夹。程序只驻留系统托盘，不显示主窗口，首次运行也不弹出设置。
+2. 在任务栏右下角（图标可能在“显示隐藏的图标”中）右键 TIL 图标 →“设置…”，填写供应商名称、上游格式、API 请求地址、API Key 和模型 ID。
 3. 点击“测试模型连接”，验证该模型能返回图解；测试会发送内置示例并产生一次 API 调用。
 4. 勾选“启用自动划词图解”并保存。WPS PDF 等无法直接读取选区的阅读器，可另外勾选“PDF / 文档兼容划词”。以后拖动鼠标划词，或双击选择文字，图解浮窗会逐步显示。
 5. 右键系统托盘图标可暂停、打开设置、查看本地示例或退出。关闭设置窗口不会退出后台程序。
@@ -64,15 +64,15 @@ flowchart TD
 
 ## 三层结构
 
-1. `textlens/capture.py` + `clipboard_capture.py`：后台鼠标状态检测、跨进程 UI Automation 选区、密码框过滤，以及可选的文档复制兼容和剪贴板还原。
-2. `textlens/model.py` + `mermaid.py`：上游请求、Mermaid 提示词、完整行增量解析、语法白名单和数量限制。
+1. `til/capture.py` + `clipboard_capture.py`：后台鼠标状态检测、跨进程 UI Automation 选区、密码框过滤，以及可选的文档复制兼容和剪贴板还原。
+2. `til/model.py` + `mermaid.py`：上游请求、Mermaid 提示词、完整行增量解析、语法白名单和数量限制。
 3. `renderer.py` + `assets/renderer.js`：预热的 Mermaid.js 本地渲染；`ui.py` + `tray.py` + `app.py`：原生浮窗、SVG 导出、托盘、快捷键、取消和过期结果隔离。`diagram.py` 仅保留本地规则预览、示例及旧结构测试。
 
 Mermaid 使用 `securityLevel: strict`、纯 SVG 标签、禁止外联的内容安全策略。模型语句通过白名单后重新规范化，再交给 Mermaid；模型不能传入 SVG、HTML、脚本、链接、图片、配置或样式。最多 8 个节点、12 条关系。只有实际渲染成功的结果才进入内存缓存；关闭浮窗或重新划词后丢弃旧结果。
 
 ## 隐私
 
-默认关闭自动发送和复制兼容；只有开启自动划词、触发手动快捷键或点击测试后才请求模型。设置窗口打开期间暂停自动捕获。程序不把划词内容和请求日志写入磁盘；成功图解有上述限时内存缓存，兼容复制的系统剪贴板历史风险另见上节。本地预览不联网，但触发图解后仍会请求 AI 更新（命中缓存除外）。API Key 使用 Windows DPAPI 绑定当前账户加密，设置保存在 `%APPDATA%\TextLens\settings.json`。供应商地址和模型 ID 是普通配置，不加密。选中内容仍会发送至配置的供应商，请自行确认服务方的数据政策。导出 SVG 是用户主动保存的文件，可能含原文信息。
+默认关闭自动发送和复制兼容；只有开启自动划词、触发手动快捷键或点击测试后才请求模型。设置窗口打开期间暂停自动捕获。程序不把划词内容和请求日志写入磁盘；成功图解有上述限时内存缓存，兼容复制的系统剪贴板历史风险另见上节。本地预览不联网，但触发图解后仍会请求 AI 更新（命中缓存除外）。API Key 使用 Windows DPAPI 绑定当前账户加密，设置保存在 `%APPDATA%\TIL\settings.json`。供应商地址和模型 ID 是普通配置，不加密。选中内容仍会发送至配置的供应商，请自行确认服务方的数据政策。导出 SVG 是用户主动保存的文件，可能含原文信息。
 
 ## 源码运行与打包
 
@@ -87,8 +87,8 @@ python selfcheck.py --renderer
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-日常启动直接双击 `dist\TextLens.exe`，可将此文件复制到桌面或其他目录；启动时不显示控制台，自动解压运行依赖可能需要几秒。配置仍保存在当前 Windows 账户的应用数据目录，不随 EXE 移动。源码运行也可双击 `main.pyw` 或使用 `pythonw main.pyw`。没有内置 API Key，也不自带模型。
+日常启动直接双击 `dist\TIL.exe`，可将此文件复制到桌面或其他目录；启动时不显示控制台，自动解压运行依赖可能需要几秒。配置仍保存在当前 Windows 账户的应用数据目录，不随 EXE 移动。源码运行也可双击 `main.pyw` 或使用 `pythonw main.pyw`。没有内置 API Key，也不自带模型。
 
-`selfcheck.py --renderer` 使用内置测试文本验证真实 WebView2/Mermaid 渲染、SVG/PNG 输出和退出，并报告冷启动及预热后耗时，不调用模型或读取用户文档。Mermaid.js 固定为 11.12.2，来源 npm 官方 `mermaid` 包，随附许可见 `textlens/assets/MERMAID-LICENSE`。
+`selfcheck.py --renderer` 使用内置测试文本验证真实 WebView2/Mermaid 渲染、SVG/PNG 输出和退出，并报告冷启动及预热后耗时，不调用模型或读取用户文档。Mermaid.js 固定为 11.12.2，来源 npm 官方 `mermaid` 包，随附许可见 `til/assets/MERMAID-LICENSE`。
 
-EXE 的独立渲染自检：`dist\TextLens.exe --check-renderer build\renderer-check.json`（先确保输出目录存在）。该模式不读取用户设置、不启动划词、不调用模型或显示窗口，仅写入自检状态和时间。
+EXE 的独立渲染自检：`dist\TIL.exe --check-renderer build\renderer-check.json`（先确保输出目录存在）。该模式不读取用户设置、不启动划词、不调用模型或显示窗口，仅写入自检状态和时间。

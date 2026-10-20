@@ -134,7 +134,7 @@ def copy_selection(hwnd, point, max_chars, processes, is_current):
         if not is_current() or time.monotonic() >= deadline:
             return None
         time.sleep(.01)
-    owner = win32gui.CreateWindowEx(0, "STATIC", "TextLensClipboard", 0, 0, 0, 0, 0, win32con.HWND_MESSAGE, 0, 0, None)
+    owner = win32gui.CreateWindowEx(0, "STATIC", "TILClipboard", 0, 0, 0, 0, 0, win32con.HWND_MESSAGE, 0, 0, None)
     copied_sequence = None
     try:
         before, saved = snapshot(owner)

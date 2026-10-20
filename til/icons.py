@@ -6,7 +6,7 @@ ICO 采用 32 位 BGRA 像素 + 1 位 AND 掩码：方角外的像素由掩码�
 
 import struct
 
-from textlens.theme import ACCENT, PAPER
+from til.theme import ACCENT, PAPER
 
 
 def _rgb(hex_color):

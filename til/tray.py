@@ -6,7 +6,7 @@ import win32api
 import win32con
 import win32gui
 
-from textlens.icons import icon_bytes
+from til.icons import icon_bytes
 
 
 def _icon_handle(size=32):
@@ -45,7 +45,7 @@ class Tray:
 
     def add_icon(self):
         flags = win32gui.NIF_ICON | win32gui.NIF_MESSAGE | win32gui.NIF_TIP
-        win32gui.Shell_NotifyIcon(win32gui.NIM_ADD, (self.hwnd, 1, flags, win32con.WM_USER + 20, self.icon, "句意图 · 右键设置"))
+        win32gui.Shell_NotifyIcon(win32gui.NIM_ADD, (self.hwnd, 1, flags, win32con.WM_USER + 20, self.icon, "TIL · 右键设置"))
 
     def run(self):
         try:
@@ -53,10 +53,10 @@ class Tray:
             self.taskbar_created = win32gui.RegisterWindowMessage("TaskbarCreated")
             window_class = win32gui.WNDCLASS()
             window_class.hInstance = instance
-            window_class.lpszClassName = f"TextLensTray{os.getpid()}"
+            window_class.lpszClassName = f"TILTray{os.getpid()}"
             window_class.lpfnWndProc = self.handle_message
             atom = win32gui.RegisterClass(window_class)
-            self.hwnd = win32gui.CreateWindow(atom, "句意图后台服务", 0, 0, 0, 0, 0, 0, 0, instance, None)
+            self.hwnd = win32gui.CreateWindow(atom, "TIL 后台服务", 0, 0, 0, 0, 0, 0, 0, instance, None)
             self.icon = _icon_handle(32)
             self.add_icon()
             for identity, letter in ((1, "I"), (2, "V")):

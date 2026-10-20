@@ -25,7 +25,7 @@ window.renderDiagram = async function (source, width = 700) {
       throw new Error("Unsupported input");
     }
     container.replaceChildren();
-    const result = await mermaid.render("textlensGraph", source, container);
+    const result = await mermaid.render("tilGraph", source, container);
     const documentSvg = new DOMParser().parseFromString(result.svg, "image/svg+xml");
     const svg = documentSvg.documentElement;
     if (svg.querySelector("script, foreignObject, image, a") || svg.nodeName !== "svg") {

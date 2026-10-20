@@ -11,7 +11,7 @@ def renderer_worker(connection):
 
     webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = False
     webview.settings["ALLOW_DOWNLOADS"] = False
-    window = webview.create_window("TextLens Mermaid renderer", (Path(__file__).parent / "assets" / "renderer.html").as_uri(), hidden=True, width=800, height=600)
+    window = webview.create_window("TIL Mermaid renderer", (Path(__file__).parent / "assets" / "renderer.html").as_uri(), hidden=True, width=800, height=600)
 
     def render(source, width):
         finished = threading.Event()

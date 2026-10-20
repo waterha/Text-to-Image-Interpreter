@@ -15,13 +15,13 @@ import win32con
 import win32event
 import win32gui
 
-from textlens import theme
-from textlens.capture import SelectionCapture
-from textlens.config import Settings, load_settings, save_settings
-from textlens.diagram import example_diagram, local_preview, to_svg
-from textlens.model import ModelJob
-from textlens.tray import Tray
-from textlens.ui import Popup, SettingsWindow
+from til import theme
+from til.capture import SelectionCapture
+from til.config import Settings, load_settings, save_settings
+from til.diagram import example_diagram, local_preview, to_svg
+from til.model import ModelJob
+from til.tray import Tray
+from til.ui import Popup, SettingsWindow
 
 
 SAMPLE = "存储层是所有存储系统的集合，包括分布式缓存、关系型数据库、NoSQL数据库等。"
@@ -31,7 +31,7 @@ class Application:
     def __init__(self, demo=False):
         self.root = tk.Tk()
         self.root.withdraw()
-        self.root.title("句意图")
+        self.root.title("TIL · 文转图理解器")
         self.root.option_add("*Font", theme.font(10))
         ttk.Style().theme_use("vista")
         self.icon = theme.window_icon(self.root)
@@ -137,7 +137,7 @@ class Application:
                 if self.settings_window:
                     self.settings_window.test_status.set("\n".join(self.notices))
             elif kind == "capture_notice":
-                messagebox.showinfo("句意图", payload, parent=self.root)
+                messagebox.showinfo("TIL", payload, parent=self.root)
         self.root.after(60, self.poll)
 
     def cancel_generation(self):
@@ -160,7 +160,7 @@ class Application:
         except ValueError:
             self.cancel_generation()
             self.popup.loading(bounds, self.settings.provider)
-            self.popup.error("请右键系统托盘中的句意图图标，选择“设置”并完成模型配置后再划词。")
+            self.popup.error("请右键系统托盘中的 TIL 图标，选择“设置”并完成模型配置后再划词。")
             return
         if not 2 <= len(text) <= self.settings.max_chars:
             messagebox.showinfo("文字长度", f"请选择 2–{self.settings.max_chars} 字的文本。", parent=self.root)
@@ -294,7 +294,7 @@ def main():
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except (AttributeError, OSError):
         pass
-    mutex = win32event.CreateMutex(None, False, "Local\\TextLens.SingleInstance")
+    mutex = win32event.CreateMutex(None, False, "Local\\TIL.SingleInstance")
     try:
         if win32api.GetLastError() == 183:
             return

@@ -8,10 +8,10 @@ import win32api
 import win32con
 import win32gui
 
-from textlens import theme
-from textlens.config import FORMATS, Settings
-from textlens.diagram import draw_svg
-from textlens.renderer import MermaidRenderer
+from til import theme
+from til.config import FORMATS, Settings
+from til.diagram import draw_svg
+from til.renderer import MermaidRenderer
 
 
 def place_popup(bounds, width, height, work_area):
@@ -49,7 +49,7 @@ def action_button(parent, text, command, background, foreground, active_backgrou
 class Popup:
     def __init__(self, root, close):
         self.window = tk.Toplevel(root)
-        self.window.title("句意图 · 图解")
+        self.window.title("TIL · 图解")
         self.window.withdraw()
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
@@ -73,9 +73,9 @@ class Popup:
         header.pack_propagate(False)
         mark = tk.Label(header, text="◈", foreground=theme.ACCENT, background=theme.BAND, font=theme.font(11, "bold"))
         mark.pack(side="left", padx=(14, 7), pady=9)
-        title = tk.Label(header, text="句意图", foreground=theme.INK, background=theme.BAND, font=theme.font(10, "bold"))
+        title = tk.Label(header, text="TIL", foreground=theme.INK, background=theme.BAND, font=theme.font(10, "bold"))
         title.pack(side="left", pady=9)
-        subtitle = tk.Label(header, text="TEXTLENS", foreground=theme.MUTED, background=theme.BAND, font=theme.font(8))
+        subtitle = tk.Label(header, text="文转图理解器", foreground=theme.MUTED, background=theme.BAND, font=theme.font(8))
         subtitle.pack(side="left", padx=(8, 0), pady=11)
         self.close_button = action_button(header, "×", close, theme.BAND, theme.MUTED, theme.TINT, theme.ACCENT, theme.font(11), padx=10, pady=1)
         self.close_button.pack(side="right", padx=(0, 8), pady=6)
@@ -210,7 +210,7 @@ class Popup:
     def export(self):
         if not self.svg:
             return
-        path = filedialog.asksaveasfilename(parent=self.window, title="导出图解", defaultextension=".svg", initialfile="句意图.svg", filetypes=[("SVG 矢量图", "*.svg")])
+        path = filedialog.asksaveasfilename(parent=self.window, title="导出图解", defaultextension=".svg", initialfile="TIL.svg", filetypes=[("SVG 矢量图", "*.svg")])
         if path:
             try:
                 Path(path).write_text(self.svg, encoding="utf-8")
@@ -223,7 +223,7 @@ class SettingsWindow:
     def __init__(self, root, current, save, test, demo, close):
         self.save_callback, self.test_callback, self.close_callback = save, test, close
         self.window = tk.Toplevel(root)
-        self.window.title("句意图 · 设置")
+        self.window.title("TIL · 设置")
         self.window.configure(background=theme.PAPER)
         self.window.resizable(False, False)
         theme.configure_styles(self.window)
@@ -241,7 +241,7 @@ class SettingsWindow:
         tk.Label(masthead, text="◈", foreground=theme.ACCENT, background=theme.PAPER, font=theme.font(17, "bold")).pack(side="left", padx=(0, 10), pady=(2, 0))
         heading = tk.Frame(masthead, background=theme.PAPER)
         heading.pack(side="left")
-        tk.Label(heading, text="句意图", font=theme.font(22, "bold"), foreground=theme.INK, background=theme.PAPER).pack(anchor="w")
+        tk.Label(heading, text="TIL · 文转图理解器", font=theme.font(22, "bold"), foreground=theme.INK, background=theme.PAPER).pack(anchor="w")
         tk.Label(heading, text="选中一句话，读懂它背后的结构。", foreground=theme.MUTED, background=theme.PAPER, font=theme.font(10)).pack(anchor="w", pady=(3, 0))
         tk.Label(masthead, text="设置", foreground=theme.ACCENT, background=theme.PAPER, font=theme.font(10, "bold")).pack(side="right", pady=(8, 0))
         service = self.card(page, "01", "模型服务")
