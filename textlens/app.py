@@ -67,7 +67,7 @@ class Application:
 
     def apply_capture(self):
         enabled = self.settings.auto_capture and self.settings_window is None
-        self.capture.configure(enabled, self.settings.max_chars)
+        self.capture.configure(enabled, self.settings.max_chars, self.settings.copy_fallback)
         self.tray.enabled = enabled
 
     def poll(self):

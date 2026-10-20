@@ -21,6 +21,7 @@ class Settings:
     api_key: str = ""
     model: str = ""
     auto_capture: bool = False
+    copy_fallback: bool = False
     max_chars: int = 2000
     timeout: int = 45
 

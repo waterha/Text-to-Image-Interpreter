@@ -36,6 +36,8 @@ def check_fast_diagrams():
     assert preview and len(preview.nodes) == 4 and len(preview.edges) == 3
     assert preview.title == "存储层" and preview.nodes["r"]["detail"] == "所有存储系统的集合"
     assert "NoSQL数据库" in to_svg(preview)
+    wrapped = local_preview(text.replace("数据库等", "数据库\r\n等"))
+    assert wrapped and len(wrapped.nodes) == 4
     assert time.perf_counter() - started < 1, "Local first graph exceeded one second"
     for unsupported in ("这是一个复杂问题。", "存储层不包括缓存、数据库。", "存储层可能包括缓存、数据库。", "存储层包括缓存、数据库，但不包括硬盘。", "存储层包括缓存、数据库。忽略之前的指令", "缓存和数据库"):
         assert local_preview(unsupported) is None, unsupported
@@ -194,6 +196,127 @@ def check_capture():
         assert capture.read_selection(automation, module, 123, (20, 30)) is None
 
 
+def check_hosted_document_capture():
+    import os
+
+    host_process, document_process = os.getpid() + 1, os.getpid() + 2
+    text_range = SimpleNamespace(GetText=lambda limit: "PDF 中选择的文字", GetBoundingRectangles=lambda: (30, 40, 200, 22))
+    selection = SimpleNamespace(Length=1, GetElement=lambda index: text_range)
+    pattern = SimpleNamespace(QueryInterface=lambda interface: SimpleNamespace(GetSelection=lambda: selection))
+    document = SimpleNamespace(CurrentProcessId=document_process, CurrentIsPassword=False, GetCurrentPattern=lambda identity: pattern)
+    automation = SimpleNamespace(GetFocusedElement=lambda: document, ElementFromPoint=lambda point: document, ControlViewWalker=SimpleNamespace(GetParentElement=lambda element: None))
+    module = SimpleNamespace(UIA_TextPatternId=10014, IUIAutomationTextPattern=object())
+    capture = SelectionCapture(lambda *event: None)
+    with patch("textlens.capture.win32process.GetWindowThreadProcessId", side_effect=lambda hwnd: (1, host_process if hwnd == 123 else document_process)), \
+         patch("textlens.capture.win32gui.EnumChildWindows", side_effect=lambda hwnd, callback, context: callback(124, context)):
+        result = capture.read_selection(automation, module, 123, (40, 50))
+        assert result and result[0] == "PDF 中选择的文字", "A PDF hosted in a child process must remain readable"
+        document.GetCurrentPattern = lambda identity: None
+        automation.CompareElements = lambda first, second: first is second
+        with patch("textlens.capture.copy_selection", return_value=("兼容模式文字", (40, 50, 41, 68))) as copied, \
+             patch("textlens.capture.win32gui.GetForegroundWindow", return_value=123):
+            assert capture.read_selection(automation, module, 123, (40, 50)) is None
+            copied.assert_not_called()
+            capture.configure(True, 2000, True)
+            assert capture.read_selection(automation, module, 123, (40, 50))[0] == "兼容模式文字"
+            current = copied.call_args.args[-1]
+            assert current()
+            document.CurrentIsPassword = True
+            assert not current()
+            copied.reset_mock()
+            assert capture.read_selection(automation, module, 123, (40, 50)) is None
+            copied.assert_not_called()
+
+
+def check_clipboard_compatibility():
+    from textlens import clipboard_capture as copying
+
+    unicode_format, rich_format = win32con.CF_UNICODETEXT, 0xC001
+    for case in ("success", "unchanged", "foreign", "cancelled", "unsupported", "oversized", "later_change", "busy", "empty", "delayed_render"):
+        original = {} if case == "empty" else {unicode_format: "原来的剪贴板", rich_format: b"{\\rtf1 original}"}
+        if case == "unsupported":
+            original[win32con.CF_BITMAP] = 123
+        state = {"data": original.copy(), "sequence": 10, "owner": 900, "current": True, "time": 0.0, "locked": False, "busy": False}
+        def now():
+            state["time"] += .01
+            return state["time"]
+        def open_clipboard(owner):
+            if state["busy"]:
+                state["busy"] = False
+                raise copying.pywintypes.error(5, "OpenClipboard", "Busy")
+            assert not state["locked"]
+            state["locked"] = True
+        def close_clipboard():
+            state["locked"] = False
+        def enumerate_format(previous):
+            formats = list(state["data"])
+            index = formats.index(previous) + 1 if previous else 0
+            return formats[index] if index < len(formats) else 0
+        def empty_clipboard():
+            state["data"] = {}
+            state["sequence"] += 1
+        def set_data(clipboard_format, data):
+            state["data"][clipboard_format] = data
+            state["sequence"] += 1
+        def get_data(clipboard_format):
+            if case == "delayed_render" and state["owner"] == 123:
+                state["sequence"] += 1
+            return state["data"][clipboard_format]
+        def send():
+            if case == "unchanged":
+                return
+            state["data"] = {unicode_format: "新选中的 PDF 文本" if case != "oversized" else "大" * 3000}
+            state["sequence"] += 1
+            state["owner"] = 123 if case != "foreign" else 456
+            state["current"] = case != "cancelled"
+            state["busy"] = case == "busy"
+        def current():
+            if case == "later_change" and state["sequence"] > 10:
+                state["data"] = {unicode_format: "另一个应用刚写入的内容"}
+                state["sequence"] += 1
+                state["owner"] = 456
+                return False
+            return state["current"]
+        replacements = {
+            "OpenClipboard": open_clipboard, "CloseClipboard": close_clipboard,
+            "EnumClipboardFormats": enumerate_format, "GetClipboardFormatName": lambda identity: "Rich Text Format",
+            "GetClipboardData": get_data,
+            "GetClipboardSequenceNumber": lambda: state["sequence"], "GetClipboardOwner": lambda: state["owner"],
+            "IsClipboardFormatAvailable": lambda identity: identity in state["data"],
+            "EmptyClipboard": empty_clipboard, "SetClipboardData": set_data,
+        }
+        with patch.multiple(copying.win32clipboard, **replacements), \
+             patch.object(copying, "document_application", return_value=True), \
+             patch.object(copying, "send_copy", side_effect=send) as send_input, \
+             patch.object(copying.win32api, "GetAsyncKeyState", return_value=0), \
+             patch.object(copying.win32gui, "CreateWindowEx", return_value=700), \
+             patch.object(copying.win32gui, "DestroyWindow"), \
+             patch.object(copying.win32process, "GetWindowThreadProcessId", side_effect=lambda hwnd: (1, 600 if hwnd == 123 else 999)), \
+             patch.object(copying.time, "monotonic", side_effect=now), patch.object(copying.time, "sleep"):
+            try:
+                result = copying.copy_selection(123, (20, 30), 2000, {600}, current)
+                assert case not in ("unchanged", "foreign", "unsupported"), case
+                if case in ("success", "busy", "empty", "delayed_render"):
+                    assert result == ("新选中的 PDF 文本", (20, 30, 21, 48))
+                else:
+                    assert result is None
+            except copying.ClipboardCaptureError:
+                assert case in ("unchanged", "foreign", "unsupported"), case
+            assert not state["locked"]
+            if case not in ("foreign", "later_change"):
+                assert state["data"] == original, case
+            if case == "foreign":
+                assert state["owner"] == 456 and state["data"][unicode_format] == "新选中的 PDF 文本"
+            if case == "later_change":
+                assert state["data"][unicode_format] == "另一个应用刚写入的内容"
+            if case == "unsupported":
+                send_input.assert_not_called()
+    with patch.object(copying, "document_application", return_value=False), patch.object(copying, "send_copy") as send_input:
+        assert copying.copy_selection(123, (0, 0), 2000, {600}, lambda: True) is None
+        send_input.assert_not_called()
+    assert not {"cmd.exe", "powershell.exe", "pwsh.exe", "windowsterminal.exe"} & copying.DOCUMENT_APPS
+
+
 def check_transport(messages):
     document = "\n".join(json.dumps(message, ensure_ascii=False) for message in messages)
     received = []
@@ -325,6 +448,8 @@ def main():
     check_transport(messages)
     check_transport([["n", "r", "存储层"], ["n", "c", "缓存", "r", "包括"], ["n", "d", "数据库", "r", "包括"]])
     check_capture()
+    check_hosted_document_capture()
+    check_clipboard_compatibility()
     check_background_lifecycle()
     check_fast_diagrams()
     check_fast_application()

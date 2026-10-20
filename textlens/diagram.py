@@ -120,7 +120,7 @@ class DiagramStream:
 
 
 def local_preview(text):
-    text = text.strip()
+    text = re.sub(r"(?<=[\u3400-\u9fff、，])[ \t]*\r?\n[ \t]*(?=[\u3400-\u9fff])", "", text.strip())
     if len(text) > 240 or re.search(r"不|未|可能|也许|如果|假如|除|但|必须|需要|[\n\r（）()：:；;]", text):
         return None
     matched = re.fullmatch(r"([^，,。！？\s]{2,24}?)(?:是([^，,。！？\n]{2,60})[，,])?(包括|包含)([^。！？\n]+?)[。.]?", text)

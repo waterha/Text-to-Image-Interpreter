@@ -5,9 +5,12 @@ import time
 from ctypes import wintypes
 
 import comtypes
+import pywintypes
 import win32api
 import win32gui
 import win32process
+
+from textlens.clipboard_capture import ClipboardCaptureError, copy_selection
 
 
 class SelectionCapture:
@@ -15,6 +18,7 @@ class SelectionCapture:
         self.publish = publish
         self.enabled = False
         self.max_chars = 2000
+        self.copy_fallback = False
         self.generation = 0
         self.commands = queue.Queue(maxsize=1)
         self.stop_event = threading.Event()
@@ -23,8 +27,9 @@ class SelectionCapture:
     def start(self):
         self.thread.start()
 
-    def configure(self, enabled, max_chars):
+    def configure(self, enabled, max_chars, copy_fallback=False):
         self.enabled, self.max_chars = enabled, max_chars
+        self.copy_fallback = copy_fallback
         self.generation += 1
 
     def request(self):
@@ -92,6 +97,8 @@ class SelectionCapture:
                             last_result = None
                             if manual:
                                 self.publish("capture_notice", "此应用没有提供可读选区。可复制文本后按 Ctrl+Alt+V，主动生成剪贴板图解。")
+                    except ClipboardCaptureError as error:
+                        self.publish("capture_notice" if manual else "notice", str(error))
                     except Exception:
                         if manual:
                             self.publish("capture_notice", "读取选区失败。请复制文本后按 Ctrl+Alt+V。")
@@ -101,15 +108,24 @@ class SelectionCapture:
             comtypes.CoUninitialize()
 
     def read_selection(self, automation, module, hwnd, point):
+        generation = self.generation
         focused = automation.GetFocusedElement()
         if focused and (focused.CurrentIsPassword or focused.CurrentProcessId == os.getpid()):
             return None
         pointed = automation.ElementFromPoint(wintypes.POINT(*point))
+        if pointed and (pointed.CurrentIsPassword or pointed.CurrentProcessId == os.getpid()):
+            return None
         candidates = [focused, pointed]
-        process_id = win32process.GetWindowThreadProcessId(hwnd)[1]
+        processes = {win32process.GetWindowThreadProcessId(hwnd)[1]}
+        try:
+            win32gui.EnumChildWindows(hwnd, lambda child, context: processes.add(win32process.GetWindowThreadProcessId(child)[1]), None)
+        except pywintypes.error:
+            pass
         for candidate in candidates:
-            for _ in range(5):
-                if not candidate or candidate.CurrentProcessId != process_id or candidate.CurrentIsPassword:
+            for _ in range(12):
+                if candidate and candidate.CurrentIsPassword:
+                    return None
+                if not candidate or candidate.CurrentProcessId not in processes or candidate.CurrentProcessId == os.getpid() or candidate.CurrentIsPassword:
                     break
                 try:
                     pattern = candidate.GetCurrentPattern(module.UIA_TextPatternId)
@@ -119,8 +135,11 @@ class SelectionCapture:
                             text_range = selected.GetElement(0)
                             text = text_range.GetText(self.max_chars + 1).strip()
                             if 2 <= len(text) <= self.max_chars:
-                                rectangles = text_range.GetBoundingRectangles()
                                 bounds = (point[0], point[1], point[0] + 1, point[1] + 18)
+                                try:
+                                    rectangles = text_range.GetBoundingRectangles()
+                                except (comtypes.COMError, OSError):
+                                    rectangles = []
                                 if len(rectangles) >= 4:
                                     left, top, width, height = rectangles[:4]
                                     if width > 0 and height > 0:
@@ -129,4 +148,11 @@ class SelectionCapture:
                 except (comtypes.COMError, OSError):
                     pass
                 candidate = automation.ControlViewWalker.GetParentElement(candidate)
+        if self.copy_fallback and focused and pointed and focused.CurrentProcessId in processes and pointed.CurrentProcessId in processes:
+            def is_current():
+                if generation != self.generation or self.stop_event.is_set() or hwnd != win32gui.GetForegroundWindow():
+                    return False
+                latest = automation.GetFocusedElement()
+                return bool(latest and not latest.CurrentIsPassword and latest.CurrentProcessId != os.getpid() and automation.CompareElements(focused, latest))
+            return copy_selection(hwnd, point, self.max_chars, processes, is_current)
         return None

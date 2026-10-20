@@ -141,6 +141,7 @@ class SettingsWindow:
         self.window.bind("<Escape>", lambda event: close())
         self.values = {name: tk.StringVar(value=str(getattr(current, name))) for name in ("provider", "api_format", "endpoint", "api_key", "model", "max_chars", "timeout")}
         self.enabled = tk.BooleanVar(value=current.auto_capture)
+        self.copy_fallback = tk.BooleanVar(value=current.copy_fallback)
         self.test_status = tk.StringVar(value="未连接 · 选择格式并填写你的模型服务")
         body = tk.Frame(self.window, background=BACKGROUND, padx=28, pady=22)
         body.pack(fill="both", expand=True)
@@ -158,15 +159,16 @@ class SettingsWindow:
         tk.Label(body, text="地址可填 https://供应商/v1 或完整接口路径；本机服务允许 HTTP。\nAPI Key 使用 Windows 当前账户加密保存，不写入日志。", justify="left", foreground="#657c88", background=BACKGROUND, font=("Microsoft YaHei UI", 9)).grid(row=8, column=0, columnspan=2, sticky="w", pady=(6, 16))
         tk.Label(body, text="02   划词与隐私", foreground=TEAL, background=BACKGROUND, font=("Microsoft YaHei UI", 11, "bold")).grid(row=9, column=0, columnspan=2, sticky="w", pady=(0, 6))
         ttk.Checkbutton(body, text="启用自动划词图解（选中的文字将发送到上述供应商）", variable=self.enabled).grid(row=10, column=0, columnspan=2, sticky="w", pady=6)
+        ttk.Checkbutton(body, text="PDF / 文档兼容划词（读不到时临时 Ctrl+C，并尝试还原剪贴板）", variable=self.copy_fallback).grid(row=11, column=0, columnspan=2, sticky="w", pady=6)
         limits = tk.Frame(body, background=BACKGROUND)
-        limits.grid(row=11, column=0, columnspan=2, sticky="w", pady=6)
+        limits.grid(row=12, column=0, columnspan=2, sticky="w", pady=6)
         for name, label in (("max_chars", "最多字数"), ("timeout", "请求超时 / 秒")):
             tk.Label(limits, text=label, background=BACKGROUND, foreground=INK).pack(side="left", padx=(0, 8))
             ttk.Entry(limits, textvariable=self.values[name], width=8).pack(side="left", padx=(0, 24))
-        tk.Label(body, text="不会读取密码框、不会自动复制，也不保存划词历史。\n不支持划词的应用：复制后按 Ctrl+Alt+V 主动图解剪贴板。\n手动读取当前选区：Ctrl+Alt+I。关闭此窗口后仍在托盘运行。", justify="left", foreground="#657c88", background=BACKGROUND, font=("Microsoft YaHei UI", 9)).grid(row=12, column=0, columnspan=2, sticky="w", pady=(7, 12))
-        tk.Label(body, textvariable=self.test_status, wraplength=570, justify="left", foreground=TEAL, background=BACKGROUND, font=("Microsoft YaHei UI", 9)).grid(row=13, column=0, columnspan=2, sticky="w", pady=(0, 14))
+        tk.Label(body, text="默认只读选区；兼容模式支持 WPS/PDF/Word 等文档应用，跳过可识别的密码框。\n临时复制可能进入系统剪贴板历史；无法安全备份时不自动复制。扫描件须先 OCR。\n手动读取选区：Ctrl+Alt+I；任意可复制应用：Ctrl+C 后 Ctrl+Alt+V。\n关闭设置后继续后台运行；图解仅短期缓存在内存。", justify="left", foreground="#657c88", background=BACKGROUND, font=("Microsoft YaHei UI", 9)).grid(row=13, column=0, columnspan=2, sticky="w", pady=(7, 12))
+        tk.Label(body, textvariable=self.test_status, wraplength=570, justify="left", foreground=TEAL, background=BACKGROUND, font=("Microsoft YaHei UI", 9)).grid(row=14, column=0, columnspan=2, sticky="w", pady=(0, 14))
         actions = tk.Frame(body, background=BACKGROUND)
-        actions.grid(row=14, column=0, columnspan=2, sticky="ew")
+        actions.grid(row=15, column=0, columnspan=2, sticky="ew")
         self.test_button = ttk.Button(actions, text="测试模型连接", command=self.test)
         self.test_button.pack(side="left")
         ttk.Button(actions, text="本地示例", command=demo).pack(side="left", padx=8)
@@ -183,7 +185,7 @@ class SettingsWindow:
             values["max_chars"], values["timeout"] = int(values["max_chars"]), int(values["timeout"])
         except ValueError as error:
             raise ValueError("最多字数和超时必须为整数。") from error
-        settings = Settings(**values, auto_capture=self.enabled.get())
+        settings = Settings(**values, auto_capture=self.enabled.get(), copy_fallback=self.copy_fallback.get())
         settings.validate()
         return settings
 
