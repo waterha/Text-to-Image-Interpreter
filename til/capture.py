@@ -96,14 +96,14 @@ class SelectionCapture:
                         else:
                             last_result = None
                             if manual:
-                                self.publish("capture_notice", "此应用没有提供可读选区。可复制文本后按 Ctrl+Alt+V，主动生成剪贴板图解。")
+                                self.publish("capture_notice", "此应用没有提供可读选区。请重新选择文本后按 Alt+Q 重试，或改用支持选区的应用。")
                     except ClipboardCaptureError as error:
                         self.publish("capture_notice" if manual else "notice", str(error))
                     except Exception:
                         if manual:
-                            self.publish("capture_notice", "读取选区失败。请复制文本后按 Ctrl+Alt+V。")
+                            self.publish("capture_notice", "读取选区失败。请重新选择文本后按 Alt+Q 重试。")
         except Exception:
-            self.publish("notice", "系统选区接口初始化失败；仍可使用 Ctrl+Alt+V 图解已复制文本。")
+            self.publish("notice", "系统选区接口初始化失败；请重新选择文本后按 Alt+Q 重试。")
         finally:
             comtypes.CoUninitialize()
 

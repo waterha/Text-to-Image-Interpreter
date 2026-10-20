@@ -56,7 +56,7 @@ def send_copy():
     if send(len(events), events, ctypes.sizeof(Input)) != len(events):
         release = (Input * 2)(*events[2:])
         send(len(release), release, ctypes.sizeof(Input))
-        raise ClipboardCaptureError("无法发送复制操作；请手动复制后按 Ctrl+Alt+V。")
+        raise ClipboardCaptureError("无法发送复制操作；请重新选择文本后按 Alt+Q 重试。")
 
 
 def snapshot(owner):
@@ -68,19 +68,19 @@ def snapshot(owner):
             if not clipboard_format:
                 break
             if len(saved) >= 32:
-                raise ClipboardCaptureError("剪贴板格式较复杂，已跳过自动复制以保护原内容。请手动复制后按 Ctrl+Alt+V。")
+                raise ClipboardCaptureError("剪贴板格式较复杂，已跳过自动复制以保护原内容。请重新选择文本后按 Alt+Q 重试。")
             if clipboard_format >= 0xC000:
                 name = win32clipboard.GetClipboardFormatName(clipboard_format)
                 if name in ("DataObject", "Ole Private Data") and win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
                     continue
                 if name in ("DataObject", "Ole Private Data", "Link Source", "Embed Source", "Embedded Object"):
-                    raise ClipboardCaptureError("剪贴板包含应用对象，已跳过自动复制。请手动复制后按 Ctrl+Alt+V。")
+                    raise ClipboardCaptureError("剪贴板包含应用对象，已跳过自动复制。请重新选择文本后按 Alt+Q 重试。")
             data = win32clipboard.GetClipboardData(clipboard_format)
             if not isinstance(data, (str, bytes)):
-                raise ClipboardCaptureError("剪贴板包含无法安全还原的内容，已跳过自动复制。请手动复制后按 Ctrl+Alt+V。")
+                raise ClipboardCaptureError("剪贴板包含无法安全还原的内容，已跳过自动复制。请重新选择文本后按 Alt+Q 重试。")
             size += len(data.encode("utf-16-le")) if isinstance(data, str) else len(data)
             if size > 2_000_000:
-                raise ClipboardCaptureError("剪贴板内容较大，已跳过自动复制。请手动复制后按 Ctrl+Alt+V。")
+                raise ClipboardCaptureError("剪贴板内容较大，已跳过自动复制。请重新选择文本后按 Alt+Q 重试。")
             saved.append((clipboard_format, data))
         return win32clipboard.GetClipboardSequenceNumber(), saved
     finally:
@@ -158,7 +158,7 @@ def copy_selection(hwnd, point, max_chars, processes, is_current):
                     return text, (point[0], point[1], point[0] + 1, point[1] + 18)
                 return None
             time.sleep(.01)
-        raise ClipboardCaptureError("阅读器未及时提供复制结果；扫描件需要先 OCR，限制复制的 PDF 无法直接读取。也可手动复制后按 Ctrl+Alt+V。")
+        raise ClipboardCaptureError("阅读器未及时提供复制结果；扫描件需要先 OCR，限制复制的 PDF 无法直接读取。请重新选择文本后按 Alt+Q 重试。")
     finally:
         try:
             if copied_sequence is not None:

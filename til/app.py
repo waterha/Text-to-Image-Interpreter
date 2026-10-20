@@ -10,8 +10,6 @@ from dataclasses import replace
 from tkinter import messagebox, ttk
 
 import win32api
-import win32clipboard
-import win32con
 import win32event
 import win32gui
 
@@ -129,8 +127,6 @@ class Application:
                 self.show_demo()
             elif kind == "hotkey" and self.settings_window is None:
                 self.capture.request()
-            elif kind == "clipboard" and self.settings_window is None:
-                self.from_clipboard()
             elif kind == "notice":
                 if payload not in self.notices:
                     self.notices.append(payload)
@@ -184,23 +180,6 @@ class Application:
             self.popup.status.set(f"本地规则预览 {self.first_graph_seconds:.2f}s · 尚未经 AI 核对 · 正在请求 AI…")
         self.job = ModelJob(replace(self.settings), text, lambda stage, content: self.publish("model", (revision, stage, content)))
         self.future = self.executor.submit(self.job.run)
-
-    def from_clipboard(self):
-        opened = False
-        try:
-            win32clipboard.OpenClipboard()
-            opened = True
-            if not win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
-                return
-            text = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT).strip()
-        except Exception:
-            messagebox.showinfo("剪贴板忙", "请稍后重试。", parent=self.root)
-            return
-        finally:
-            if opened:
-                win32clipboard.CloseClipboard()
-        point = win32api.GetCursorPos()
-        self.generate(text, (*point, point[0] + 1, point[1] + 18))
 
     def show_demo(self):
         self.cancel_generation()

@@ -59,11 +59,10 @@ class Tray:
             self.hwnd = win32gui.CreateWindow(atom, "TIL 后台服务", 0, 0, 0, 0, 0, 0, 0, instance, None)
             self.icon = _icon_handle(32)
             self.add_icon()
-            for identity, letter in ((1, "I"), (2, "V")):
-                try:
-                    win32gui.RegisterHotKey(self.hwnd, identity, win32con.MOD_CONTROL | win32con.MOD_ALT | 0x4000, ord(letter))
-                except pywintypes.error:
-                    self.publish("notice", f"Ctrl+Alt+{letter} 注册失败，可能被其他软件占用。")
+            try:
+                win32gui.RegisterHotKey(self.hwnd, 1, win32con.MOD_ALT | 0x4000, ord("Q"))
+            except pywintypes.error:
+                self.publish("notice", "Alt+Q 注册失败，可能被其他软件占用。")
             win32gui.PumpMessages()
         except Exception:
             self.publish("notice", "系统托盘初始化失败，请关闭后重新启动。")
@@ -85,12 +84,11 @@ class Tray:
                 if action:
                     self.publish(action, None)
         elif message == win32con.WM_HOTKEY:
-            self.publish("hotkey" if wparam == 1 else "clipboard", None)
+            self.publish("hotkey", None)
         elif message == win32con.WM_CLOSE:
             win32gui.DestroyWindow(hwnd)
         elif message == win32con.WM_DESTROY:
-            for identity in (1, 2):
-                win32gui.UnregisterHotKey(hwnd, identity)
+            win32gui.UnregisterHotKey(hwnd, 1)
             win32gui.Shell_NotifyIcon(win32gui.NIM_DELETE, (hwnd, 1))
             self.hwnd = None
             win32gui.PostQuitMessage(0)
