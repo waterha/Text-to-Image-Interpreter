@@ -7,16 +7,20 @@ mermaid.initialize({
   maxEdges: 12,
   theme: "base",
   fontFamily: '"Microsoft YaHei UI", sans-serif',
-  flowchart: { htmlLabels: false, useMaxWidth: false, curve: "linear", padding: 16 },
+  // 浮窗只有原来一半宽，节点内边距和层级间距都要收紧，字才不会被一起缩小。
+  flowchart: { htmlLabels: false, useMaxWidth: false, curve: "linear", padding: 6, nodeSpacing: 18, rankSpacing: 26 },
   themeVariables: {
     primaryColor: "#f1e2d3", primaryTextColor: "#2e2018", primaryBorderColor: "#9c4520",
-    lineColor: "#9c4520", edgeLabelBackground: "#faf3e7", tertiaryColor: "#efe7dc", fontSize: "16px"
+    lineColor: "#9c4520", edgeLabelBackground: "#faf3e7", tertiaryColor: "#efe7dc", fontSize: "14px"
   }
 });
 
 const PAPER = "#faf3e7";
+// 字号的上下限：太小看不清，太大一张图就占满屏幕。
+const MIN_SCALE = 0.55;
+const MAX_SCALE = 1.3;
 
-window.renderDiagram = async function (source, width = 700) {
+window.renderDiagram = async function (source, maxWidth = 700, maxHeight = 100000) {
   const started = performance.now();
   const container = document.getElementById("graph");
   let imageUrl;
@@ -32,7 +36,11 @@ window.renderDiagram = async function (source, width = 700) {
       throw new Error("Unsupported SVG");
     }
     const bounds = svg.getAttribute("viewBox").split(/\s+/).map(Number);
-    const height = Math.max(100, Math.min(2200, Math.ceil(width * bounds[3] / bounds[2])));
+    // 按自然尺寸缩放，而不是硬拉到一个固定宽度：小图不会被放大成巨图。
+    const fit = Math.min(maxWidth / bounds[2], maxHeight / bounds[3], MAX_SCALE);
+    const scale = Math.max(fit, MIN_SCALE);
+    const width = Math.max(96, Math.round(bounds[2] * scale));
+    const height = Math.max(72, Math.min(2400, Math.round(bounds[3] * scale)));
     svg.setAttribute("width", String(width));
     svg.setAttribute("height", String(height));
     svg.setAttribute("style", `background:${PAPER}`);

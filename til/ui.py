@@ -47,12 +47,22 @@ def action_button(parent, text, command, background, foreground, active_backgrou
 
 
 class Popup:
+    """选区上方的小图解浮窗：圆角、淡入并轻微上浮，不留大片空白。"""
+
+    ACCENT_BAR = 2
+    HEADER = 30
+    FOOTER = 22
+    RADIUS = 14
+    # 浮窗的最大内容宽度。图比这窄时按原尺寸显示，不再拉满。
+    MAX_WIDTH = 380
+
     def __init__(self, root, close):
         self.window = tk.Toplevel(root)
         self.window.title("TIL · 图解")
         self.window.withdraw()
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
+        self.window.attributes("-alpha", 0.0)
         self.window.configure(background=theme.INK)
         theme.configure_styles(self.window)
         self.svg = ""
@@ -64,39 +74,45 @@ class Popup:
         self.image = None
         self.renderer = MermaidRenderer()
         self.status = tk.StringVar(value="")
+        self.shown_status = tk.StringVar(value="")
+        self.status.trace_add("write", lambda *_: self.fit_status())
         self.close = close
+        self.frames = None
+        self.pulse = None
+        self.visible = False
         shell = tk.Frame(self.window, background=theme.PAPER)
         shell.pack(fill="both", expand=True, padx=1, pady=1)
-        tk.Frame(shell, background=theme.ACCENT, height=3).pack(fill="x")
-        header = tk.Frame(shell, background=theme.BAND, height=40)
+        tk.Frame(shell, background=theme.ACCENT, height=self.ACCENT_BAR).pack(fill="x")
+        header = tk.Frame(shell, background=theme.BAND, height=self.HEADER)
         header.pack(fill="x")
         header.pack_propagate(False)
-        mark = tk.Label(header, text="◈", foreground=theme.ACCENT, background=theme.BAND, font=theme.font(11, "bold"))
-        mark.pack(side="left", padx=(14, 7), pady=9)
-        title = tk.Label(header, text="TIL", foreground=theme.INK, background=theme.BAND, font=theme.font(10, "bold"))
-        title.pack(side="left", pady=9)
-        subtitle = tk.Label(header, text="文转图理解器", foreground=theme.MUTED, background=theme.BAND, font=theme.font(8))
-        subtitle.pack(side="left", padx=(8, 0), pady=11)
-        self.close_button = action_button(header, "×", close, theme.BAND, theme.MUTED, theme.TINT, theme.ACCENT, theme.font(11), padx=10, pady=1)
-        self.close_button.pack(side="right", padx=(0, 8), pady=6)
-        self.export_button = action_button(header, "导出 SVG", self.export, theme.BAND, theme.ACCENT, theme.TINT, theme.ACCENT, theme.font(9), padx=10, pady=3)
-        self.export_button.pack(side="right", padx=(0, 6), pady=6)
+        mark = tk.Label(header, text="◈", foreground=theme.ACCENT, background=theme.BAND, font=theme.font(9, "bold"))
+        mark.pack(side="left", padx=(10, 5), pady=6)
+        title = tk.Label(header, text="TIL", foreground=theme.INK, background=theme.BAND, font=theme.font(9, "bold"))
+        title.pack(side="left", pady=6)
+        subtitle = tk.Label(header, text="文转图理解器", foreground=theme.MUTED, background=theme.BAND, font=theme.font(7))
+        subtitle.pack(side="left", padx=(6, 0), pady=8)
+        self.close_button = action_button(header, "×", close, theme.BAND, theme.MUTED, theme.TINT, theme.ACCENT, theme.font(10), padx=7, pady=0)
+        self.close_button.pack(side="right", padx=(0, 5), pady=4)
+        self.export_button = action_button(header, "导出", self.export, theme.BAND, theme.MUTED, theme.TINT, theme.ACCENT, theme.font(8), padx=8, pady=2)
+        self.export_button.pack(side="right", padx=(0, 3), pady=4)
         for widget in (header, mark, title, subtitle):
             widget.bind("<ButtonPress-1>", self.drag_start)
             widget.bind("<B1-Motion>", self.drag_move)
+        # 先给页脚和分隔线占位，再让画布吃掉剩余高度；否则画布会把它们压成 0。
+        footer = tk.Frame(shell, background=theme.PAPER, height=self.FOOTER)
+        footer.pack(side="bottom", fill="x")
+        footer.pack_propagate(False)
+        tk.Label(footer, textvariable=self.shown_status, background=theme.PAPER, foreground=theme.MUTED, anchor="w", font=theme.font(8)).pack(side="left", fill="x", expand=True, padx=(10, 8), pady=3)
+        tk.Frame(shell, background=theme.LINE, height=1).pack(side="bottom", fill="x")
         content = tk.Frame(shell, background=theme.PAPER)
         content.pack(fill="both", expand=True)
-        self.canvas = tk.Canvas(content, background=theme.PAPER, highlightthickness=0, borderwidth=0, width=700, height=340)
+        self.canvas = tk.Canvas(content, background=theme.PAPER, highlightthickness=0, borderwidth=0, width=self.MAX_WIDTH, height=160)
         self.canvas.pack(side="left", fill="both", expand=True)
         scrollbar = ttk.Scrollbar(content, orient="vertical", command=self.canvas.yview)
         scrollbar.pack(side="right", fill="y")
         self.canvas.configure(yscrollcommand=scrollbar.set)
         self.canvas.bind("<MouseWheel>", lambda event: self.canvas.yview_scroll(-int(event.delta / 120), "units"))
-        tk.Frame(shell, background=theme.LINE, height=1).pack(fill="x")
-        footer = tk.Frame(shell, background=theme.PAPER)
-        footer.pack(fill="x")
-        tk.Label(footer, text="◈", foreground=theme.ACCENT, background=theme.PAPER, font=theme.font(7)).pack(side="left", padx=(14, 7), pady=9)
-        tk.Label(footer, textvariable=self.status, background=theme.PAPER, foreground=theme.MUTED, anchor="w", font=theme.font(9)).pack(side="left", fill="x", expand=True, padx=(0, 14), pady=9)
         self.window.bind("<Escape>", lambda event: close())
         self.window.update_idletasks()
         self.hwnd = win32gui.GetParent(self.window.winfo_id()) or self.window.winfo_id()
@@ -111,18 +127,71 @@ class Popup:
         offset_x, offset_y = self.drag_offset
         win32gui.SetWindowPos(self.hwnd, win32con.HWND_TOPMOST, event.x_root - offset_x, event.y_root - offset_y, 0, 0, win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE)
 
-    def layout(self, diagram_height=340):
+    def fit_status(self):
+        """状态栏只有一行；按窗口宽度截断，原文仍完整保存在 status 里。"""
+        text = self.status.get()
+        limit = max(16, int((self.window.winfo_width() - 26) / 7.2))
+        self.shown_status.set(text if len(text) <= limit else text[:limit - 1] + "…")
+
+    def shape(self, width, height):
+        """圆角窗口：用窗口区域裁掉四角。"""
+        try:
+            region = win32gui.CreateRoundRectRgn(0, 0, width + 1, height + 1, self.RADIUS, self.RADIUS)
+            win32gui.SetWindowRgn(self.hwnd, region, True)
+        except Exception:
+            pass
+
+    def layout(self, diagram_width=360, diagram_height=200):
         monitor = win32api.MonitorFromPoint(self.bounds[:2], win32con.MONITOR_DEFAULTTONEAREST)
         work_area = win32api.GetMonitorInfo(monitor)["Work"]
-        available_width = work_area[2] - work_area[0] - 32
-        self.scale = min(1.15, max(.45, (available_width - 20) / 700))
-        width = round(700 * self.scale) + 20
-        height = min(round(diagram_height * self.scale) + 86, 620, work_area[3] - work_area[1] - 32)
+        available_width = work_area[2] - work_area[0] - 48
+        chrome = self.ACCENT_BAR + self.HEADER + self.FOOTER + 3
+        self.scale = min(1.0, max(.5, available_width / max(1, diagram_width)))
+        content_width = max(240, min(self.MAX_WIDTH, round(diagram_width * self.scale)))
+        content_height = round(diagram_height * self.scale)
+        width = content_width + 2
+        height = min(content_height + chrome, work_area[3] - work_area[1] - 32)
         self.window.geometry(f"{width}x{height}")
         self.window.update_idletasks()
+        self.shape(width, height)
         position_x, position_y = place_popup(self.bounds, width, height, work_area)
+        self.reveal(position_x, position_y, width, height)
+
+    def reveal(self, position_x, position_y, width, height):
+        """淡入 + 从下方 8px 处上浮到位；已经显示时只调整尺寸，不重复动画。"""
+        if self.visible or not self.window.winfo_exists():
+            win32gui.SetWindowPos(self.hwnd, win32con.HWND_TOPMOST, position_x, position_y, width, height, win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
+            return
+        self.visible = True
+        start_y = position_y + 8
+        self.window.attributes("-alpha", 0.0)
         self.window.deiconify()
-        win32gui.SetWindowPos(self.hwnd, win32con.HWND_TOPMOST, position_x, position_y, width, height, win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
+        win32gui.SetWindowPos(self.hwnd, win32con.HWND_TOPMOST, position_x, start_y, width, height, win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
+        steps = 8
+        self.frames = [self.window.after(index * 16, lambda index=index: self.float_step(index, steps, position_x, position_y, width, height)) for index in range(1, steps + 1)]
+
+    def float_step(self, index, steps, position_x, position_y, width, height):
+        if not self.window.winfo_exists():
+            return
+        ratio = index / steps
+        offset = int(8 * (1 - ratio) ** 2)
+        try:
+            self.window.attributes("-alpha", round(min(1.0, ratio * 1.35), 2))
+            win32gui.SetWindowPos(self.hwnd, win32con.HWND_TOPMOST, position_x, position_y + offset, width, height, win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
+        except tk.TclError:
+            pass
+
+    def animate_pulse(self):
+        """加载态的小呼吸点，让等待看起来是活的。"""
+        if not self.window.winfo_exists():
+            return
+        dots = (self.pulse_index % 3) + 1 if hasattr(self, "pulse_index") else 1
+        self.pulse_index = dots
+        if self.visible and not self.svg:
+            item = self.canvas.find_withtag("hint")
+            if item:
+                self.canvas.itemconfigure(item[0], text="正在识别概念与关系" + "·" * dots)
+        self.pulse = self.window.after(420, self.animate_pulse)
 
     def loading(self, bounds, provider):
         self.render_token += 1
@@ -131,27 +200,42 @@ class Popup:
         self.svg = ""
         self.export_button.configure(state="disabled")
         self.status.set(f"{provider}  ·  正在分析，节点会逐步出现  ·  点击 × 取消")
-        self.layout()
+        self.layout(320, 150)
+        self.draw_loading()
+        # 布局刚设好时 winfo_width 还是 1，等窗口真正映射后再按实际宽度重画居中。
+        self.pending_loading = self.window.after(40, self.draw_loading)
+
+    def draw_loading(self):
+        if not self.window.winfo_exists() or self.svg:
+            return
         self.canvas.delete("all")
-        self.canvas.configure(scrollregion=(0, 0, 700 * self.scale, 340 * self.scale))
-        center, top, radius = 350 * self.scale, 94 * self.scale, 9 * self.scale
+        width = self.canvas.winfo_width()
+        if width <= 1:
+            width = self.window.winfo_width() - 16
+        height = max(self.canvas.winfo_height(), 140)
+        self.canvas.configure(scrollregion=(0, 0, width, height))
+        center, top, radius = width / 2, 22, 7
         self.canvas.create_polygon(center, top - radius, center + radius, top, center, top + radius, center - radius, top, fill=theme.ACCENT, outline="")
-        self.canvas.create_text(center, 130 * self.scale, text="把一段话，变成一张图。", fill=theme.INK, font=theme.font(19, "bold"))
-        self.canvas.create_line(center - 26, 160 * self.scale, center + 26, 160 * self.scale, fill=theme.ACCENT, width=2)
-        self.canvas.create_text(center, 186 * self.scale, text="正在识别概念与关系…", fill=theme.MUTED, font=theme.font(11))
+        self.canvas.create_text(center, top + 20, text="把一段话，变成一张图。", fill=theme.INK, font=theme.font(11, "bold"))
+        self.canvas.create_line(center - 16, top + 40, center + 16, top + 40, fill=theme.ACCENT, width=1)
+        self.canvas.create_text(center, top + 50, text="正在识别概念与关系", fill=theme.MUTED, font=theme.font(8), tags="hint")
+        if self.pulse is None:
+            self.pulse_index = 0
+            self.pulse = self.window.after(420, self.animate_pulse)
 
     def render(self, content, done=False, complete=None):
         self.render_token += 1
         self.render_callback = complete
         self.render_done = done
+        self.cancel_pending()
         if isinstance(content, str) and not content.startswith("<svg"):
-            self.layout()
-            self.renderer.submit(self.render_token, content, round(700 * self.scale))
+            self.layout(self.MAX_WIDTH, 200)
+            self.renderer.submit(self.render_token, content, self.MAX_WIDTH - 4, 420)
             return
         if isinstance(content, dict):
-            self.layout(content["height"] * 700 / content["width"])
-            if content["width"] != round(700 * self.scale):
-                self.renderer.submit(self.render_token, content["source"], round(700 * self.scale))
+            self.layout(content["width"], content["height"])
+            if content["width"] > self.MAX_WIDTH:
+                self.renderer.submit(self.render_token, content["source"], self.MAX_WIDTH - 4, 420)
                 return
             self.svg = content["svg"]
             self.image = tk.PhotoImage(data=content["png"])
@@ -160,13 +244,25 @@ class Popup:
             self.canvas.create_image(0, 0, image=self.image, anchor="nw")
         else:
             self.svg = content
-            height = float(ET.fromstring(content).get("height"))
-            self.layout(height)
+            root = ET.fromstring(content)
+            width, height = float(root.get("width")), float(root.get("height"))
+            self.layout(width, height)
             draw_svg(self.canvas, content, self.scale)
+            # 本地预览的底图要贴合缩小的画布，否则右侧和底部会露出空白。
+            self.canvas.configure(background=theme.PAPER)
+        self.stop_pulse()
         self.export_button.configure(state="normal" if done else "disabled")
-        self.status.set("图解已完成  ·  AI 可能有误，请结合原文核对  ·  可拖动标题栏" if done else "正在生成图解…  ·  点击 × 取消")
+        self.status.set("图解已完成  ·  AI 可能有误，请结合原文核对" if done else "正在生成图解…  ·  点击 × 取消")
         if complete:
             complete(content, None)
+
+    def stop_pulse(self):
+        if self.pulse is not None:
+            try:
+                self.window.after_cancel(self.pulse)
+            except tk.TclError:
+                pass
+            self.pulse = None
 
     def poll_renderer(self):
         try:
@@ -189,21 +285,45 @@ class Popup:
     def error(self, message):
         self.render_token += 1
         self.render_callback = None
+        self.stop_pulse()
         self.export_button.configure(state="disabled")
         self.status.set("生成未完成  ·  检查设置后重新选择文本")
+        self.layout(320, 120)
         self.canvas.delete("all")
-        center, top = 350 * self.scale, 76 * self.scale
-        width, height = 560 * self.scale, 148 * self.scale
-        self.canvas.create_rectangle(center - width / 2, top, center + width / 2, top + height, fill=theme.TINT, outline=theme.LINE, width=1)
-        self.canvas.create_text(center, top + 32 * self.scale, text="◈  图解未完成", fill=theme.ACCENT, font=theme.font(12, "bold"))
-        self.canvas.create_text(center, top + 78 * self.scale, text=message, width=width - 60 * self.scale, justify="center", fill=theme.INK, font=theme.font(10))
+        width = self.canvas.winfo_width()
+        if width <= 1:
+            width = self.window.winfo_width() - 16
+        center, top = width / 2, 8
+        self.canvas.configure(scrollregion=(0, 0, width, max(self.canvas.winfo_height(), 100)))
+        self.canvas.create_text(center, top, text="◈  图解未完成", fill=theme.ACCENT, font=theme.font(10, "bold"))
+        self.canvas.create_text(center, top + 26, text=message, width=max(160, width - 32), justify="center", fill=theme.INK, font=theme.font(8))
 
     def hide(self):
         self.render_token += 1
         self.render_callback = None
+        self.stop_pulse()
+        self.cancel_pending()
+        self.visible = False
+        self.window.attributes("-alpha", 0.0)
         self.window.withdraw()
 
+    def cancel_pending(self):
+        pending = getattr(self, "pending_loading", None)
+        if pending is not None:
+            try:
+                self.window.after_cancel(pending)
+            except tk.TclError:
+                pass
+            self.pending_loading = None
+
     def shutdown(self):
+        self.stop_pulse()
+        self.cancel_pending()
+        for frame in self.frames or ():
+            try:
+                self.window.after_cancel(frame)
+            except tk.TclError:
+                pass
         self.window.after_cancel(self.render_poll)
         self.renderer.close()
 

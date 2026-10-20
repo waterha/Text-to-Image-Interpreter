@@ -13,7 +13,7 @@ def renderer_worker(connection):
     webview.settings["ALLOW_DOWNLOADS"] = False
     window = webview.create_window("TIL Mermaid renderer", (Path(__file__).parent / "assets" / "renderer.html").as_uri(), hidden=True, width=800, height=600)
 
-    def render(source, width):
+    def render(source, width, max_height=100000):
         finished = threading.Event()
         result = []
 
@@ -21,7 +21,7 @@ def renderer_worker(connection):
             result.append(value)
             finished.set()
 
-        window.evaluate_js(f"window.renderDiagram({json.dumps(source)}, {width})", callback=receive)
+        window.evaluate_js(f"window.renderDiagram({json.dumps(source)}, {width}, {max_height})", callback=receive)
         if not finished.wait(12):
             raise TimeoutError("Mermaid renderer timed out")
         return result[0]
@@ -38,8 +38,8 @@ def renderer_worker(connection):
                 request = connection.recv()
                 if request is None:
                     break
-                token, source, width = request
-                result = render(source, width)
+                token, source, width, max_height = request
+                result = render(source, width, max_height)
                 result["source"] = source
                 connection.send((token, result))
         except (EOFError, BrokenPipeError, OSError):
@@ -70,7 +70,7 @@ class MermaidRenderer:
         self.thread = threading.Thread(target=self.run, name="MermaidRenderer", daemon=True)
         self.thread.start()
 
-    def submit(self, token, source, width):
+    def submit(self, token, source, width, max_height=100000):
         if self.error:
             self.results.put((token, {"error": self.error}))
             return
@@ -78,7 +78,7 @@ class MermaidRenderer:
             self.requests.get_nowait()
         except queue.Empty:
             pass
-        self.requests.put_nowait((token, source, width))
+        self.requests.put_nowait((token, source, width, max_height))
 
     def run(self):
         context = multiprocessing.get_context("spawn")
