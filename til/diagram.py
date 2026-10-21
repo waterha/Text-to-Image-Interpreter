@@ -4,14 +4,14 @@ import unicodedata
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 
-from til.theme import ACCENT, INK, LINE, MUTED, PAPER, SURFACE, TINT
+from til.theme import ACCENT, BAND, INK, LINE, MUTED, PAPER, SURFACE, TINT
 
 
 # 原生小图的版面：整张图约 360 宽，与缩小后的浮窗对齐，字号保持 9–11px 可读。
 WIDTH = 360
 NODE_WIDTH = 108
 COLUMN_STEP = 116
-FIRST_TOP = 66
+FIRST_TOP = 86
 NODE_PADDING = 8
 LINE_HEIGHT = 14
 
@@ -214,8 +214,8 @@ def node_text(node, primary):
 
 def node_height(node):
     labels, details = node_text(node, True)
-    height = NODE_PADDING + len(labels) * LINE_HEIGHT + (len(details) * 12 + 2 if details else 0) + NODE_PADDING
-    return max(44, round(height))
+    height = 14 + NODE_PADDING + len(labels) * LINE_HEIGHT + (len(details) * 12 + 2 if details else 0) + NODE_PADDING
+    return max(58, round(height))
 
 
 def positions(diagram):
@@ -240,12 +240,18 @@ def positions(diagram):
     rows = [level[index:index + 3] for level in levels for index in range(0, len(level), 3)]
     result = {}
     top = FIRST_TOP
-    for row in rows:
+    for row_index, row in enumerate(rows):
+        drift = (14 if row_index % 2 == 0 else -14) if row_index and len(row) == 1 else 0
         for column, identity in enumerate(row):
-            result[identity] = (WIDTH / 2 + (column - (len(row) - 1) / 2) * COLUMN_STEP, top)
+            result[identity] = (WIDTH / 2 + drift + (column - (len(row) - 1) / 2) * COLUMN_STEP, top)
         top += max(node_height(diagram.nodes[identity]) for identity in row) + 76
+    bottom = max(y + node_height(diagram.nodes[identity]) for identity, (_, y) in result.items())
+    for index, (source, target, _) in enumerate(diagram.edges):
+        if source in result and target in result:
+            route, (_, label_y) = edge_route(diagram, result, source, target, index)
+            bottom = max(bottom, max(y for _, y in route), label_y + 18)
     summary_lines = wrap_text(diagram.summary, 42, 2)
-    return result, round(top + len(summary_lines) * 13 + 8)
+    return result, round(bottom + 24 + len(summary_lines) * 13)
 
 
 def edge_route(diagram, locations, source, target, index):
@@ -277,6 +283,22 @@ def edge_route(diagram, locations, source, target, index):
     return points, label
 
 
+def rounded_route(points, radius=7):
+    """Sample small quadratic corners; SVG and Canvas share identical geometry."""
+    rounded = [points[0]]
+    for before, corner, after in zip(points, points[1:], points[2:]):
+        incoming = math.dist(before, corner)
+        outgoing = math.dist(corner, after)
+        distance = min(radius, incoming / 2, outgoing / 2)
+        start = tuple(c + (b - c) * distance / incoming for b, c in zip(before, corner))
+        end = tuple(c + (a - c) * distance / outgoing for a, c in zip(after, corner))
+        rounded.append(start)
+        for step in range(1, 5):
+            t = step / 4
+            rounded.append(tuple((1 - t) ** 2 * a + 2 * (1 - t) * t * b + t ** 2 * c for a, b, c in zip(start, corner, end)))
+    return rounded + [points[-1]]
+
+
 def to_svg(diagram):
     locations, height = positions(diagram)
     root = ET.Element("svg", {"xmlns": "http://www.w3.org/2000/svg", "width": str(WIDTH), "height": str(height), "viewBox": f"0 0 {WIDTH} {height}", "role": "img", "aria-label": diagram.title})
@@ -285,22 +307,25 @@ def to_svg(diagram):
     def element(kind, **attrs):
         return ET.SubElement(root, kind, {key.replace("_", "-"): str(value) for key, value in attrs.items()})
 
-    def text_at(text, center_x, top, size=11, color=INK, weight="normal"):
-        item = element("text", x=center_x, y=top, fill=color, font_size=size, font_family="Microsoft YaHei UI, sans-serif", text_anchor="middle", dominant_baseline="hanging", font_weight=weight)
+    def text_at(text, center_x, top, size=11, color=INK, weight="normal", anchor="middle", node=""):
+        item = element("text", x=center_x, y=top, fill=color, font_size=size, font_family="Microsoft YaHei UI, sans-serif", text_anchor=anchor, dominant_baseline="hanging", font_weight=weight, data_node=node)
         item.text = text
 
     element("rect", x=0, y=0, width=WIDTH, height=height, fill=PAPER)
-    # 标题最多两行，分隔线跟着下移，长标题不会被裁掉。
-    title_lines = wrap_text(diagram.title, 46, 2)
+    # A quiet editorial header, not another box around the graph.
+    element("circle", cx=22, cy=19, r=3, fill=ACCENT)
+    text_at("概念之间", 32, 13, 9, MUTED, anchor="start")
+    text_at(f"{len(diagram.nodes):02d} 个节点", WIDTH - 20, 13, 9, MUTED, anchor="end")
+    title_lines = wrap_text(diagram.title, 44, 2)
     for line_index, line in enumerate(title_lines):
-        text_at(line, WIDTH / 2, 12 + line_index * 16, 12, INK, "bold")
-    rule_y = 12 + len(title_lines) * 16 + 2
-    element("line", x1=22, y1=rule_y, x2=WIDTH - 22, y2=rule_y, stroke=LINE, stroke_width=1)
+        text_at(line, 20, 32 + line_index * 17, 13, INK, "bold", anchor="start")
+    element("circle", cx=WIDTH - 28, cy=56, r=10, fill=TINT)
+    element("circle", cx=WIDTH - 14, cy=42, r=3, fill=LINE)
     for index, (source, target, label) in enumerate(diagram.edges):
         if source not in locations or target not in locations:
             continue
         points, (middle_x, middle_y) = edge_route(diagram, locations, source, target, index)
-        element("polyline", points=" ".join(f"{x},{y}" for x, y in points), fill="none", stroke=ACCENT, stroke_width=1.6)
+        element("polyline", points=" ".join(f"{x:.2f},{y:.2f}" for x, y in rounded_route(points)), fill="none", stroke=ACCENT, stroke_width=1.4, stroke_linecap="round", stroke_linejoin="round")
         end_x, end_y = points[-1]
         prior_x, prior_y = points[-2]
         angle = math.atan2(end_y - prior_y, end_x - prior_x)
@@ -310,7 +335,7 @@ def to_svg(diagram):
             label_lines = wrap_text(label, 16, 2)
             label_width = min(78, max(26, max(sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in line) for line in label_lines) * 4.5 + 6))
             middle_x = max(label_width / 2 + 2, min(WIDTH - label_width / 2 - 2, middle_x))
-            element("rect", x=middle_x - label_width / 2, y=middle_y - 7, width=label_width, height=len(label_lines) * 11 + 2, fill=PAPER)
+            element("rect", x=middle_x - label_width / 2, y=middle_y - 7, width=label_width, height=len(label_lines) * 11 + 5, rx=7, fill=SURFACE, stroke=TINT, stroke_width=.6)
             for line_index, line in enumerate(label_lines):
                 text_at(line, middle_x, middle_y - 6 + line_index * 11, 9, MUTED)
     for index, (identity, node) in enumerate(diagram.nodes.items()):
@@ -318,12 +343,21 @@ def to_svg(diagram):
         primary = index == 0 and diagram.layout == "tree"
         labels, details = node_text(node, primary)
         height_used = node_height(node)
-        element("rect", x=center_x - NODE_WIDTH / 2, y=top, width=NODE_WIDTH, height=height_used, rx=10, fill=ACCENT if primary else SURFACE, stroke=ACCENT if primary else LINE, stroke_width=1)
+        left = center_x - NODE_WIDTH / 2
+        element("rect", x=left + 1, y=top + 4, width=NODE_WIDTH, height=height_used, rx=16, fill=BAND)
+        element("rect", x=left, y=top, width=NODE_WIDTH, height=height_used, rx=16,
+                fill=ACCENT if primary else SURFACE, stroke=ACCENT if primary else LINE,
+                stroke_width=.8, data_node=identity, data_role="card")
+        text_at("核心" if primary else f"{index + 1:02d}", left + 13, top + 7, 8,
+                TINT if primary else MUTED, anchor="start", node=identity)
+        element("circle", cx=left + NODE_WIDTH - 12, cy=top + 11, r=2,
+                fill=TINT if primary else ACCENT, data_node=identity)
         for line_index, line in enumerate(labels):
-            text_at(line, center_x, top + NODE_PADDING + line_index * LINE_HEIGHT, 11, PAPER if primary else INK, "bold")
-        detail_top = top + NODE_PADDING + len(labels) * LINE_HEIGHT + 1
+            text_at(line, center_x, top + NODE_PADDING + 14 + line_index * LINE_HEIGHT,
+                    11, PAPER if primary else INK, "bold", node=identity)
+        detail_top = top + NODE_PADDING + 14 + len(labels) * LINE_HEIGHT + 1
         for line_index, line in enumerate(details):
-            text_at(line, center_x, detail_top + line_index * 12, 9, TINT if primary else MUTED)
+            text_at(line, center_x, detail_top + line_index * 12, 9, TINT if primary else MUTED, node=identity)
     lines = wrap_text(diagram.summary, 42, 2)
     bottom = height - 8 - len(lines) * 13
     for line_index, line in enumerate(lines):
@@ -338,6 +372,11 @@ def draw_svg(canvas, svg, scale=1):
     for item in root:
         kind, attrs = item.tag.rsplit("}", 1)[-1], item.attrib
 
+        identity = attrs.get("data-node", "")
+        tags = ("node", f"node:{identity}") if identity else ()
+        if attrs.get("data-role") == "card":
+            tags += (f"card:{identity}",)
+
         def number(key):
             return float(attrs.get(key, 0)) * scale
 
@@ -345,22 +384,25 @@ def draw_svg(canvas, svg, scale=1):
             left, top = number("x"), number("y")
             right, bottom = left + number("width"), top + number("height")
             radius = min(number("rx"), (right - left) / 2, (bottom - top) / 2)
-            options = {"fill": attrs.get("fill", ""), "outline": attrs.get("stroke", ""), "width": number("stroke-width")}
+            options = {"fill": attrs.get("fill", ""), "outline": attrs.get("stroke", ""), "width": number("stroke-width"), "tags": tags}
             if radius:
                 points = [left + radius, top, right - radius, top, right, top, right, top + radius, right, bottom - radius, right, bottom, right - radius, bottom, left + radius, bottom, left, bottom, left, bottom - radius, left, top + radius, left, top]
                 canvas.create_polygon(points, smooth=True, splinesteps=20, **options)
             else:
                 canvas.create_rectangle(left, top, right, bottom, **options)
+        elif kind == "circle":
+            x, y, radius = number("cx"), number("cy"), number("r")
+            canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill=attrs["fill"], outline="", tags=tags)
         elif kind == "line":
-            canvas.create_line(number("x1"), number("y1"), number("x2"), number("y2"), fill=attrs["stroke"], width=number("stroke-width"))
+            canvas.create_line(number("x1"), number("y1"), number("x2"), number("y2"), fill=attrs["stroke"], width=number("stroke-width"), tags=tags)
         elif kind in ("polygon", "polyline"):
             coords = [float(value) * scale for point in attrs["points"].split() for value in point.split(",")]
             if kind == "polyline":
-                canvas.create_line(coords, fill=attrs["stroke"], width=number("stroke-width"), joinstyle="round")
+                canvas.create_line(coords, fill=attrs["stroke"], width=number("stroke-width"), joinstyle="round", capstyle="round", tags=tags)
             else:
-                canvas.create_polygon(coords, fill=attrs["fill"], outline="")
+                canvas.create_polygon(coords, fill=attrs["fill"], outline="", tags=tags)
         elif kind == "text":
-            canvas.create_text(number("x"), number("y"), text=item.text or "", fill=attrs["fill"], anchor="n", font=("Microsoft YaHei UI", -max(8, round(number("font-size"))), attrs.get("font-weight", "normal")))
+            canvas.create_text(number("x"), number("y"), text=item.text or "", fill=attrs["fill"], anchor={"start": "nw", "end": "ne"}.get(attrs.get("text-anchor"), "n"), tags=tags, font=("Microsoft YaHei UI", -max(8, round(number("font-size"))), attrs.get("font-weight", "normal")))
 
 
 def example_diagram():

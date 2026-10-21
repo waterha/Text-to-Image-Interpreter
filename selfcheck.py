@@ -15,7 +15,7 @@ import win32con
 
 from til.capture import SelectionCapture
 from til.config import FORMATS, Settings, load_settings, save_settings
-from til.diagram import Diagram, DiagramStream, PROMPT, example_diagram, positions, to_svg, node_height, edge_route
+from til.diagram import Diagram, DiagramStream, PROMPT, example_diagram, positions, to_svg, node_height, edge_route, rounded_route
 from til.model import ModelJob, endpoint_url, request_payload
 from til.ui import place_popup
 
@@ -545,6 +545,9 @@ def check_layouts():
         assert len(root.findall('s:polyline', namespace)) == len(diagram.edges)
         for index, (source, target, _) in enumerate(diagram.edges):
             points, label = edge_route(diagram, locations, source, target, index)
+            rounded = rounded_route(points)
+            assert rounded[0] == points[0] and rounded[-1] == points[-1]
+            assert all(0 <= x <= 360 and 0 <= y <= height for x, y in rounded)
             assert all(0 <= x <= 360 and 0 <= y <= height for x, y in points)
             assert all(x == xx or y == yy for (x, y), (xx, yy) in zip(points, points[1:]))
             for identity, (cx, top) in locations.items():
@@ -575,6 +578,16 @@ def check_native_renderer():
                 popup.render(stream.source, complete=lambda *args: callbacks.append(args))
                 assert len(callbacks) == 1 and callbacks[0] == (stream.source, None)
                 assert popup.canvas.find_all()
+                assert popup.content_frames and popup.canvas.find_withtag('arrival')
+                popup.cancel_pending()
+                assert not popup.content_frames and not popup.canvas.find_withtag('arrival')
+                card = popup.canvas.find_withtag('card:b')[0]
+                original = popup.canvas.itemcget(card, 'outline')
+                with patch.object(popup.canvas, 'gettags', return_value=('node', 'node:b')):
+                    popup.highlight_node(None)
+                assert popup.canvas.itemcget(card, 'outline') != original
+                popup.clear_highlight()
+                assert popup.canvas.itemcget(card, 'outline') == original
                 assert str(popup.export_button.cget('state')) == 'disabled'
                 popup.render(stream.source, done=True)
                 assert str(popup.export_button.cget('state')) == 'normal'
@@ -602,6 +615,27 @@ def check_native_renderer():
                 time.sleep(.01)
             assert popup.window.state() == 'withdrawn', 'Animation resurrected a cancelled popup'
             assert not popup.visible and popup.frames is None
+            assert not popup.content_frames and not popup.canvas.find_withtag('arrival')
+            popup.render(stream.source, done=True)
+            deadline = time.monotonic() + .3
+            while time.monotonic() < deadline:
+                root.update()
+                time.sleep(.01)
+            assert not popup.content_frames and popup.arrival_offset == 0
+            assert not popup.canvas.find_withtag('arrival')
+            assert not popup.scrollbar.winfo_ismapped(), 'Small graphs should have no scrollbar'
+            tall = DiagramStream()
+            tall.feed('\n'.join(f'+n{i} 长节点' for i in range(8)) + '\n' + '\n'.join(f'n{i}>n{i+1} 下一步' for i in range(7)), final=True)
+            with patch("til.ui.win32api.GetMonitorInfo", return_value={"Work": (0, 0, 1920, 600)}):
+                popup.render(tall.source, done=True)
+            root.update_idletasks()
+            assert popup.scrollbar.winfo_ismapped()
+            popup.canvas.yview_moveto(1)
+            assert popup.canvas.yview()[0] > 0
+            popup.render(stream.source, done=True)
+            root.update_idletasks()
+            assert not popup.scrollbar.winfo_ismapped()
+            popup.hide()
         finally:
             popup.shutdown()
     finally:
