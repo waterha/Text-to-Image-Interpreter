@@ -91,6 +91,8 @@ class Application:
 
     def drain_events(self):
         now = time.monotonic()
+        self.capture.ensure_running()
+        self.tray.ensure_running()
         if now - self.last_health_log >= 60:
             log_info(f"health capture_alive={self.capture.thread.is_alive()} tray_alive={self.tray.thread.is_alive()} queue={self.events.qsize()}")
             self.last_health_log = now
