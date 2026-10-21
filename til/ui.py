@@ -1,4 +1,3 @@
-import queue
 import tkinter as tk
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -11,7 +10,6 @@ import win32gui
 from til import theme
 from til.config import FORMATS, Settings
 from til.diagram import draw_svg
-from til.renderer import MermaidRenderer
 
 
 def place_popup(bounds, width, height, work_area):
@@ -68,11 +66,6 @@ class Popup:
         self.svg = ""
         self.bounds = (300, 500, 600, 520)
         self.scale = 1
-        self.render_token = 0
-        self.render_callback = None
-        self.render_done = False
-        self.image = None
-        self.renderer = MermaidRenderer()
         self.status = tk.StringVar(value="")
         self.shown_status = tk.StringVar(value="")
         self.status.trace_add("write", lambda *_: self.fit_status())
@@ -118,7 +111,6 @@ class Popup:
         self.hwnd = win32gui.GetParent(self.window.winfo_id()) or self.window.winfo_id()
         style = win32gui.GetWindowLong(self.hwnd, win32con.GWL_EXSTYLE)
         win32gui.SetWindowLong(self.hwnd, win32con.GWL_EXSTYLE, style | win32con.WS_EX_TOOLWINDOW | 0x08000000)
-        self.render_poll = self.window.after(30, self.poll_renderer)
 
     def drag_start(self, event):
         self.drag_offset = (event.x_root - self.window.winfo_x(), event.y_root - self.window.winfo_y())
@@ -160,6 +152,7 @@ class Popup:
     def reveal(self, position_x, position_y, width, height):
         """淡入 + 从下方 8px 处上浮到位；已经显示时只调整尺寸，不重复动画。"""
         if self.visible or not self.window.winfo_exists():
+            self.window.attributes("-alpha", 1.0)
             win32gui.SetWindowPos(self.hwnd, win32con.HWND_TOPMOST, position_x, position_y, width, height, win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
             return
         self.visible = True
@@ -194,8 +187,7 @@ class Popup:
         self.pulse = self.window.after(420, self.animate_pulse)
 
     def loading(self, bounds, provider):
-        self.render_token += 1
-        self.render_callback = None
+        self.cancel_pending()
         self.bounds = bounds
         self.svg = ""
         self.export_button.configure(state="disabled")
@@ -224,32 +216,22 @@ class Popup:
             self.pulse = self.window.after(420, self.animate_pulse)
 
     def render(self, content, done=False, complete=None):
-        self.render_token += 1
-        self.render_callback = complete
-        self.render_done = done
         self.cancel_pending()
-        if isinstance(content, str) and not content.startswith("<svg"):
-            self.layout(self.MAX_WIDTH, 200)
-            self.renderer.submit(self.render_token, content, self.MAX_WIDTH - 4, 420)
-            return
-        if isinstance(content, dict):
-            self.layout(content["width"], content["height"])
-            if content["width"] > self.MAX_WIDTH:
-                self.renderer.submit(self.render_token, content["source"], self.MAX_WIDTH - 4, 420)
-                return
-            self.svg = content["svg"]
-            self.image = tk.PhotoImage(data=content["png"])
-            self.canvas.delete("all")
-            self.canvas.configure(scrollregion=(0, 0, content["width"], content["height"]))
-            self.canvas.create_image(0, 0, image=self.image, anchor="nw")
-        else:
-            self.svg = content
+        try:
             root = ET.fromstring(content)
             width, height = float(root.get("width")), float(root.get("height"))
             self.layout(width, height)
             draw_svg(self.canvas, content, self.scale)
-            # 本地预览的底图要贴合缩小的画布，否则右侧和底部会露出空白。
+            self.canvas.yview_moveto(0)
             self.canvas.configure(background=theme.PAPER)
+        except (ValueError, TypeError, ET.ParseError, tk.TclError):
+            message = "本地图解绘制失败，请重新选择文本。"
+            if complete:
+                complete(None, message)
+            else:
+                self.error(message)
+            return
+        self.svg = content
         self.stop_pulse()
         self.export_button.configure(state="normal" if done else "disabled")
         self.status.set("图解已完成  ·  AI 可能有误，请结合原文核对" if done else "正在生成图解…  ·  点击 × 取消")
@@ -264,27 +246,7 @@ class Popup:
                 pass
             self.pulse = None
 
-    def poll_renderer(self):
-        try:
-            while True:
-                token, result = self.renderer.results.get_nowait()
-                if token != self.render_token:
-                    continue
-                callback = self.render_callback
-                if result.get("error"):
-                    if callback:
-                        callback(None, result["error"])
-                    else:
-                        self.error(result["error"])
-                else:
-                    self.render(result, self.render_done, callback)
-        except queue.Empty:
-            pass
-        self.render_poll = self.window.after(30, self.poll_renderer)
-
     def error(self, message):
-        self.render_token += 1
-        self.render_callback = None
         self.stop_pulse()
         self.export_button.configure(state="disabled")
         self.status.set("生成未完成  ·  检查设置后重新选择文本")
@@ -299,8 +261,6 @@ class Popup:
         self.canvas.create_text(center, top + 26, text=message, width=max(160, width - 32), justify="center", fill=theme.INK, font=theme.font(8))
 
     def hide(self):
-        self.render_token += 1
-        self.render_callback = None
         self.stop_pulse()
         self.cancel_pending()
         self.visible = False
@@ -308,6 +268,12 @@ class Popup:
         self.window.withdraw()
 
     def cancel_pending(self):
+        for frame in self.frames or ():
+            try:
+                self.window.after_cancel(frame)
+            except tk.TclError:
+                pass
+        self.frames = None
         pending = getattr(self, "pending_loading", None)
         if pending is not None:
             try:
@@ -319,13 +285,6 @@ class Popup:
     def shutdown(self):
         self.stop_pulse()
         self.cancel_pending()
-        for frame in self.frames or ():
-            try:
-                self.window.after_cancel(frame)
-            except tk.TclError:
-                pass
-        self.window.after_cancel(self.render_poll)
-        self.renderer.close()
 
     def export(self):
         if not self.svg:
@@ -449,4 +408,4 @@ class SettingsWindow:
 
     def test_result(self, success, message):
         self.test_button.configure(state="normal")
-        self.test_status.set("连接成功 · 模型返回的 Mermaid 已通过语法白名单校验，可保存并开始划词。" if success else message)
+        self.test_status.set("连接成功 · 模型返回的 DSL 图解已通过解析和 SVG 生成校验，可保存并开始划词。" if success else message)

@@ -5,7 +5,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit, urlunsplit
 
-from til.mermaid import MermaidStream, PROMPT
+from til.diagram import DiagramStream, PROMPT
 
 
 def endpoint_url(settings):
@@ -131,7 +131,7 @@ class ModelJob:
             request = urllib.request.Request(endpoint_url(self.settings), data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
             deadline = time.monotonic() + self.settings.timeout
             self.check(deadline)
-            stream = MermaidStream()
+            stream = DiagramStream()
             last_partial = 0
             opener = urllib.request.build_opener(NoRedirect())
             with opener.open(request, timeout=self.settings.timeout) as response:

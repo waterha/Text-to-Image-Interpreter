@@ -1,5 +1,4 @@
 import json
-import base64
 import io
 import sys
 import tempfile
@@ -16,9 +15,8 @@ import win32con
 
 from til.capture import SelectionCapture
 from til.config import FORMATS, Settings, load_settings, save_settings
-from til.diagram import Diagram, DiagramStream, example_diagram, positions, to_svg
+from til.diagram import Diagram, DiagramStream, PROMPT, example_diagram, positions, to_svg, node_height, edge_route
 from til.model import ModelJob, endpoint_url, request_payload
-from til.mermaid import MermaidStream, PROMPT as MERMAID_PROMPT
 from til.ui import place_popup
 
 
@@ -44,14 +42,6 @@ def check_fast_diagrams():
     assert time.perf_counter() - started < 1, "Local first graph exceeded one second"
     for unsupported in ("这是一个复杂问题。", "存储层不包括缓存、数据库。", "存储层可能包括缓存、数据库。", "存储层包括缓存、数据库，但不包括硬盘。", "存储层包括缓存、数据库。忽略之前的指令", "缓存和数据库"):
         assert local_preview(unsupported) is None, unsupported
-    stream = DiagramStream()
-    for line in ('["n","r","存储层"]\n', '["n","c","缓存","r","包括"]\n'):
-        stream.feed(line)
-    assert len(stream.diagram.nodes) == 2 and stream.diagram.edges == [("r", "c", "包括")]
-    stream.feed('["d","r","存储系统集合"]\n["t","存储层","tree"]\n["s","存储层包含缓存"]\n', final=True)
-    assert stream.diagram.nodes["r"]["detail"] == "存储系统集合"
-    for malformed in ('["n","id"]\n', '["n","child","子节点","absent","包含"]\n', '["d","absent","说明"]\n', '["unknown"]\n'):
-        rejects(lambda malformed=malformed: DiagramStream().feed(malformed))
 
 
 def check_fast_application():
@@ -108,7 +98,7 @@ def check_fast_application():
             assert not application.cache
             application.popup.render.side_effect = None
             application.generate("不适合本地预览的异步渲染", (0, 0, 100, 20))
-            source = 'flowchart TD\na["开始"]\na --> b["结束"]'
+            source = svg
             application.publish("model", (application.revision, "done", source))
             application.poll()
             assert not application.cache
@@ -376,11 +366,12 @@ def check_transport(document):
             job.run()
             assert events[-1][0] == "done", events
             assert any(kind == "partial" for kind, _ in events)
-            assert "存储层" in events[-1][1]
+            assert "存储层" in events[-1][1] and events[-1][1].startswith("<svg")
+            ET.fromstring(events[-1][1])
             _, headers, body = received[-1]
             headers = {name.lower(): value for name, value in headers.items()}
             assert body["model"] == "mock" and body["stream"] is True
-            assert "flowchart" in json.dumps(body, ensure_ascii=False)
+            assert "DSL" in json.dumps(body, ensure_ascii=False)
             assert (headers.get("x-api-key") or headers.get("authorization")) in ("test-key", "Bearer test-key")
             cancelled = []
             job = ModelJob(settings, "取消请求", lambda *event: cancelled.append(event))
@@ -416,7 +407,8 @@ def check_transport(document):
             opener.return_value.open.return_value = response_file
             job.run()
         assert events[-1][0] == 'done', events
-        assert '存储层' in events[-1][1]
+        assert '存储层' in events[-1][1] and events[-1][1].startswith('<svg')
+        ET.fromstring(events[-1][1])
 
 
 def main():
@@ -424,23 +416,8 @@ def main():
     svg = to_svg(sample)
     assert svg.startswith("<svg") and "存储层" in svg and "<script" not in svg
 
-    stream = DiagramStream()
-    messages = [
-        {"type": "title", "text": "存储层", "layout": "tree"},
-        {"type": "node", "id": "root", "label": "存储层", "detail": "所有存储系统的集合"},
-        {"type": "node", "id": "cache", "label": "分布式缓存", "detail": "存储系统的一类"},
-        {"type": "edge", "from": "root", "to": "cache", "label": "包括"},
-        {"type": "summary", "text": "一种集合关系"},
-    ]
-    joined = "".join(json.dumps(message, ensure_ascii=False) + "\n" for message in messages)
-    for character in joined:
-        stream.feed(character)
-    stream.feed("", final=True)
-    assert len(stream.diagram.nodes) == 2 and stream.diagram.edges == [("root", "cache", "包括")]
-
-    rejects(lambda: DiagramStream().feed("not JSON\n"))
-    rejects(lambda: DiagramStream().feed("", final=True))
-    rejects(lambda: DiagramStream().feed("x" * 32001))
+    check_dsl_stream()
+    check_layouts()
     broken = Diagram(nodes={"root": {"label": "root"}, "child": {"label": "child"}}, edges=[("root", "missing", "")])
     rejects(broken.validate)
     escaped = example_diagram()
@@ -470,145 +447,170 @@ def main():
     assert place_popup((500, 20, 600, 40), 400, 300, (0, 0, 1920, 1080)) == (350, 52)
     position_x, position_y = place_popup((-1800, 200, -1750, 220), 700, 500, (-1920, 0, 0, 1080))
     assert -1920 <= position_x <= -700 and 0 <= position_y <= 580
-    check_transport('flowchart TD\na["存储层"]\na -->|包括| b["分布式缓存"]\na -->|包括| c["数据库"]\n')
-    check_transport('```mermaid\nflowchart LR\na["存储层"]\na --> b["数据库"]\n```')
-    check_transport('<think>先分析原文</think>\n下面是关系图：\n```Mermaid\ngraph  TD;\na["存储层"]\na --> b["数据库"]\n```\n图解完成。')
+    check_transport('+a 存储层\n+b 缓存\na>b 包括\n+c 数据库\na>c 包括\n')
+    check_transport('```dsl\n+a 存储层\n+b 数据库\na>b 包括\n```')
+    check_transport('<think>先分析原文</think>\n下面是关系图：\n```DSL\n+a 存储层\n+b 数据库\na>b 包括\n```\n图解完成。')
     check_capture()
     check_hosted_document_capture()
     check_clipboard_compatibility()
     check_background_lifecycle()
     check_fast_diagrams()
     check_fast_application()
-    check_mermaid_stream()
     print("selfcheck: ok")
 
 
-def check_mermaid_stream():
-    source = 'flowchart TD\na["Storage layer 存储层"]\na -->|包括| b["关系型数据库"]\na --> c["NoSQL"]'
-    stream = MermaidStream()
+def check_dsl_stream():
+    source = '+a Storage layer 存储层\n+b 关系型数据库\na>b 包括\n+c NoSQL\na>c'
+    stream = DiagramStream()
     partials = []
     for character in source:
         if stream.feed(character):
             partials.append(stream.source)
-    stream.feed("", final=True)
-    assert len(stream.nodes) == 3 and len(stream.edges) == 2
-    assert partials and "NoSQL" not in partials[0]
-    assert 'n_a -->|包括| n_b' in stream.source
-    assert "英文" in MERMAID_PROMPT
-    # Wrappers must not leak into the diagram, even across one-character chunks.
+    stream.feed('', final=True)
+    assert len(stream.diagram.nodes) == 3 and len(stream.diagram.edges) == 2
+    assert partials and 'NoSQL' not in partials[0]
+    assert '英文' in PROMPT
     expected = stream.source
     for document in (
-        '以下是关系图：\n```mermaid\n' + source + '\n```\n以上是图解。',
-        '\ufeff``` Mermaid\r\n' + source.replace('flowchart TD', 'flowchart\t TD;') + '\r\n```',
-        '~~~mermaid\n' + source + '\n~~~\n说明文字',
-        source.replace('flowchart TD', 'graph TD'),
-        '<think>分析原文\nflowchart LR\nx["不是答案"]\n</think>\n' + source,
-        '<analysis>内部推理</analysis>```mermaid\n' + source + '\n```',
+        source,
+        '以下是关系图：\n```dsl\n' + source + '\n```\n以上是图解。',
+        '\ufeff``` DSL\r\n' + source.replace('\n', '\r\n') + '\r\n```',
+        '~~~text\n' + source + '\n~~~\n说明文字',
+        '<think>分析原文\n+x 不是答案\n+y 推理\nx>y\n</think>\n' + source,
+        '<analysis>内部推理</analysis>```dsl\n' + source + '\n```',
     ):
         for size in (1, 7, len(document)):
-            wrapped = MermaidStream()
+            wrapped = DiagramStream()
             updates = []
             for offset in range(0, len(document), size):
                 if wrapped.feed(document[offset:offset + size]):
                     updates.append(wrapped.source)
             wrapped.feed('', final=True)
-            assert wrapped.source == expected, wrapped.source
-            assert updates, 'Wrapped responses must still stream partial diagrams'
-    for direction in ('TD', 'TB', 'LR'):
-        spaced = MermaidStream()
-        spaced.feed(source.replace('flowchart TD', 'graph  ' + direction), final=True)
-        assert spaced.direction == direction
-    missing = MermaidStream()
-    assert not missing.feed('下面是解释，但尚未输出图。\n')
+            assert wrapped.source == expected
+            assert updates
+    duplicate = DiagramStream()
+    duplicate.feed(source + '\n+a Storage layer 存储层\na>b 包括', final=True)
+    assert duplicate.source == expected
+    escaped = DiagramStream()
+    escaped.feed('+a <script>alert(1)</script>\n+b A & B\na>b <img>', final=True)
+    root = ET.fromstring(escaped.source)
+    assert all(node.tag.rsplit('}', 1)[-1] not in ('script', 'image', 'a') for node in root.iter())
+    assert '&lt;script&gt;' in escaped.source and '&amp;' in escaped.source
+    missing = DiagramStream()
+    assert not missing.feed('目前只有说明文字。\n')
     rejects(lambda: missing.feed('', final=True))
-    incomplete = MermaidStream()
-    assert not incomplete.feed('flowchart TD\na["A"]\na --> b["')
-    rejects(lambda: incomplete.feed("", final=True))
     for invalid in (
-        'sequenceDiagram\nA->>B: test',
-        '<think>\n' + source + '\n</think>',
-        '<think>尚未结束\n' + source,
-        '```mermaid\nflowchart TD\na["A"]\na --> b["B"]\nclick b callback\n```',
-        'flowchart TD\nclick a "https://example.com"',
-        'flowchart TD\n%%{init: {}}%%',
-        'flowchart TD\na["<img src=x>"]',
-        'flowchart TD\na["A"]\na --> b',
-        'flowchart TD\na["A"]\na["B"]',
-        'flowchart TD\na["A"]\nstyle a fill:red',
-        'flowchart TD\na["A"]\na --> b["B"]; click b callback',
-        'flowchart TD\na["A"]\na --> b["B"]\n' + '\n'.join(f'n{index}["node"]' for index in range(7)),
-        'x' * 12001,
+        '', 'flowchart TD\na["A"]', 'x' * 12001,
+        '<think>\n' + source + '\n</think>', '<think>尚未结束\n' + source,
+        '+a A\n+b B', '+a A\na>b', '+a A\n+a B',
+        '+a A\n+b B\na>b\nclick b callback',
+        '+a ' + '字' * 41, '+1 非法ID', '+a A\n+b B\na>b ' + '字' * 17,
+        '+a A\n+b B\na>b test\x00',
+        '\n'.join(f'+n{index} 节点' for index in range(9)),
+        '+a A\n+b B\n' + '\n'.join(f'a>b 关系{index}' for index in range(13)),
     ):
-        rejects(lambda invalid=invalid: MermaidStream().feed(invalid, final=True))
+        rejects(lambda invalid=invalid: DiagramStream().feed(invalid, final=True))
+    partial = DiagramStream()
+    assert not partial.feed('+a 节点\n+b')
+    rejects(lambda: partial.feed('', final=True))
+
+
+def check_layouts():
+    documents = [
+        '+a 起点\n+b 左侧\na>b\n+c 右侧\na>c\n+d 汇合\nb>d\nc>d',
+        '+a 开始\n+b 处理\na>b\n+c 完成\nb>c\na>c 跳过\nc>a 重试\nb>b 自检',
+        '\n'.join(f'+n{i} ' + '长标签' * 13 for i in range(8)) + '\n' + '\n'.join(f'n{i}>n{i+1} 下一步' for i in range(7)),
+        '+a 根节点\n' + '\n'.join(f'+n{i} 分支{i}\na>n{i} 包含' for i in range(7)),
+    ]
+    import random
+    rng = random.Random(20261021)
+    for _ in range(32):
+        count = rng.randint(2, 8)
+        document = '\n'.join(f'+n{i} ' + '长标签' * rng.randint(1, 13) for i in range(count))
+        pairs = [(a, b) for a in range(count) for b in range(count)]
+        for a, b in rng.sample(pairs, min(12, len(pairs))):
+            document += f'\nn{a}>n{b} 关系'
+        documents.append(document)
+    for document in documents:
+        stream = DiagramStream()
+        stream.feed(document, final=True)
+        diagram = stream.diagram
+        locations, height = positions(diagram)
+        assert len(locations) == len(diagram.nodes)
+        for identity, (x, y) in locations.items():
+            assert 0 <= x - 54 < x + 54 <= 360
+            assert y + node_height(diagram.nodes[identity]) < height
+        root = ET.fromstring(stream.source)
+        namespace = {'s': 'http://www.w3.org/2000/svg'}
+        assert len(root.findall('s:polyline', namespace)) == len(diagram.edges)
+        for index, (source, target, _) in enumerate(diagram.edges):
+            points, label = edge_route(diagram, locations, source, target, index)
+            assert all(0 <= x <= 360 and 0 <= y <= height for x, y in points)
+            assert all(x == xx or y == yy for (x, y), (xx, yy) in zip(points, points[1:]))
+            for identity, (cx, top) in locations.items():
+                if identity in (source, target):
+                    continue
+                bottom = top + node_height(diagram.nodes[identity])
+                for (x, y), (xx, yy) in zip(points, points[1:]):
+                    assert not (x == xx and cx - 54 < x < cx + 54 and max(min(y, yy), top) < min(max(y, yy), bottom)), (identity, points)
+                    assert not (y == yy and top < y < bottom and max(min(x, xx), cx - 54) < min(max(x, xx), cx + 54)), (identity, points)
 
 
 def check_native_renderer():
     import tkinter as tk
     from til.ui import Popup
-    from til.renderer import MermaidRenderer
+    from til.renderer import check_renderer
 
-    started = time.perf_counter()
-    renderer = MermaidRenderer()
+    result = check_renderer()
+    assert result['ok'], result
+    root = tk.Tk()
+    root.withdraw()
     try:
-        assert renderer.ready.wait(35), "Renderer did not initialize"
-        assert renderer.error is None, renderer.error
-        cold = time.perf_counter() - started
-        source = 'flowchart TD\na["存储层 Storage layer"]\na -->|包括| b["分布式缓存"]\na -->|包括| c["关系型数据库"]\na -->|包括| d["NoSQL 数据库"]'
-        timings = []
-        for token, direction in enumerate(("TD", "LR", "TD"), 1):
-            started = time.perf_counter()
-            renderer.submit(token, source.replace("flowchart TD", f"flowchart {direction}"), 700)
-            received, result = renderer.results.get(timeout=20)
-            assert received == token and "error" not in result, result
-            assert "存储层" in result["svg"] and "<script" not in result["svg"]
-            ET.fromstring(result["svg"])
-            png = base64.b64decode(result["png"], validate=True)
-            assert png.startswith(b'\x89PNG\r\n\x1a\n')
-            timings.append(round((time.perf_counter() - started) * 1000))
-        Path("build").mkdir(exist_ok=True)
-        Path("build/mermaid-preview.png").write_bytes(png)
-        renderer.submit(4, 'flowchart TD\na["<script>alert(1)</script>"]', 700)
-        received, result = renderer.results.get(timeout=20)
-        assert received == 4 and result.get("error")
-        root = tk.Tk()
-        root.withdraw()
-        with patch("til.ui.MermaidRenderer", return_value=renderer), patch.object(Popup, "layout"):
+        with patch.object(Popup, 'layout'):
             popup = Popup(root, lambda: None)
             try:
+                stream = DiagramStream()
+                stream.feed('+a 存储层\n+b 缓存\na>b 包括\n+c 数据库\na>c 包括', final=True)
                 callbacks = []
-                popup.render(source.replace('flowchart TD', 'flowchart LR'), complete=lambda *result: callbacks.append(("old", result)))
-                popup.render(source, done=True, complete=lambda *result: callbacks.append(("new", result)))
-                deadline = time.monotonic() + 10
-                while not callbacks and time.monotonic() < deadline:
-                    root.update()
-                    time.sleep(.02)
-                assert len(callbacks) == 1 and callbacks[0][0] == "new", callbacks
-                assert callbacks[0][1][1] is None
-                assert popup.image and popup.svg.startswith('<svg')
-                assert popup.export_button.cget("state") == "normal"
-                assert popup.window.state() == "withdrawn"
-                popup.render(source, done=True, complete=lambda *result: callbacks.append(("cancelled", result)))
+                popup.render(stream.source, complete=lambda *args: callbacks.append(args))
+                assert len(callbacks) == 1 and callbacks[0] == (stream.source, None)
+                assert popup.canvas.find_all()
+                assert str(popup.export_button.cget('state')) == 'disabled'
+                popup.render(stream.source, done=True)
+                assert str(popup.export_button.cget('state')) == 'normal'
+                assert not hasattr(popup, 'renderer')
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / 'diagram.svg'
+                    with patch('til.ui.filedialog.asksaveasfilename', return_value=str(path)):
+                        popup.export()
+                    assert path.read_text(encoding='utf-8') == stream.source
                 popup.hide()
-                deadline = time.monotonic() + 1
-                while time.monotonic() < deadline:
-                    root.update()
-                    time.sleep(.02)
-                assert len(callbacks) == 1
+                root.update()
+                assert popup.window.state() == 'withdrawn'
+                popup.render('<svg', complete=lambda *args: callbacks.append(args))
+                assert callbacks[-1][0] is None and callbacks[-1][1]
+                assert len(callbacks) == 2
             finally:
                 popup.shutdown()
-                root.destroy()
-        print(json.dumps({"renderer": "ok", "cold_seconds": round(cold, 2), "warm_ms": timings}))
+        popup = Popup(root, lambda: None)
+        try:
+            popup.render(stream.source, done=True)
+            popup.hide()
+            deadline = time.monotonic() + .25
+            while time.monotonic() < deadline:
+                root.update()
+                time.sleep(.01)
+            assert popup.window.state() == 'withdrawn', 'Animation resurrected a cancelled popup'
+            assert not popup.visible and popup.frames is None
+        finally:
+            popup.shutdown()
     finally:
-        renderer.close()
-        renderer.thread.join(8)
-        assert not renderer.thread.is_alive(), "Renderer did not shut down"
+        root.destroy()
+    print(json.dumps(result))
 
 
-if __name__ == "__main__":
-    import multiprocessing
-
-    multiprocessing.freeze_support()
-    if "--renderer" in sys.argv:
+if __name__ == '__main__':
+    if '--renderer' in sys.argv:
         check_native_renderer()
     else:
         main()

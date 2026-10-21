@@ -1,3 +1,2 @@
 comtypes>=1.4.8,<2
 pywin32>=308,<400
-pywebview==6.2.1
