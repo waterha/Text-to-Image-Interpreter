@@ -5,6 +5,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit, urlunsplit
 
+from til.diagnostics import exception as log_exception, info as log_info
 from til.diagram import DiagramStream, PROMPT
 
 
@@ -123,6 +124,7 @@ class ModelJob:
                     return
 
     def run(self):
+        log_info(f"model job started chars={len(self.text)}")
         try:
             self.settings.validate()
             if not 2 <= len(self.text) <= self.settings.max_chars:
@@ -145,18 +147,23 @@ class ModelJob:
                 stream.feed("", final=True)
                 self.publish("done", stream.source)
         except Cancelled:
-            pass
+            log_info("model job cancelled")
         except urllib.error.HTTPError as error:
+            log_exception(f"model HTTP error status={error.code}", error)
             hints = {401: "API Key 无效", 403: "无权访问模型", 404: "请求地址或模型不存在", 429: "请求过多或额度不足"}
             self.publish_error(f"HTTP {error.code}：{hints.get(error.code, '上游服务错误')}。请检查设置后重试。")
-        except (TimeoutError, urllib.error.URLError):
+        except (TimeoutError, urllib.error.URLError) as error:
+            log_exception("model connection failed", error)
             self.publish_error("连接失败或请求超时。请检查网络、代理和 API 请求地址。")
         except ValueError as error:
+            log_exception("model response rejected", error)
             self.publish_error(str(error) if not isinstance(error, json.JSONDecodeError) else "上游返回的内容不是有效 JSON。")
-        except Exception:
+        except Exception as error:
+            log_exception("model job failed", error)
             self.publish_error("生成失败：上游响应格式不兼容，或连接已中断。请检查设置。")
         finally:
             self.response = None
+            log_info("model job ended")
 
     def publish_error(self, message):
         if not self.cancelled.is_set():
