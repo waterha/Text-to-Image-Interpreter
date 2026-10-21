@@ -16,6 +16,7 @@ import win32gui
 from til import theme
 from til.capture import SelectionCapture
 from til.config import Settings, load_settings, save_settings
+from til.diagnostics import exception as log_exception, info as log_info
 from til.diagram import example_diagram, local_preview, to_svg
 from til.model import ModelJob
 from til.tray import Tray
@@ -46,6 +47,7 @@ class Application:
         self.generation_started = 0.0
         self.first_graph_seconds = None
         self.notices = []
+        self.last_health_log = 0.0
         self.root.report_callback_exception = self.report_ui_error
         try:
             self.settings = load_settings()
@@ -54,6 +56,7 @@ class Application:
             self.notices.append("无法读取原有配置或解密 API Key。原文件未被改动，请检查设置。")
         if demo:
             self.settings = replace(self.settings, trigger_mode="hotkey")
+        log_info("application initialized")
         self.capture = SelectionCapture(self.publish)
         self.tray = Tray(self.publish)
         self.popup = Popup(self.root, self.hide_popup)
@@ -72,12 +75,14 @@ class Application:
         enabled = self.settings.trigger_mode == "automatic" and self.settings_window is None
         self.capture.configure(enabled, self.settings.max_chars, self.settings.copy_fallback)
         self.tray.trigger_mode = self.settings.trigger_mode
+        log_info(f"capture configured automatic={enabled} copy_fallback={self.settings.copy_fallback}")
 
     def poll(self):
         keep_polling = True
         try:
             keep_polling = self.drain_events()
         except Exception as error:
+            log_exception("event poll failed", error)
             self.report_ui_error(type(error), error, error.__traceback__)
         finally:
             # Re-arm even after failure, but never while a modal callback is still running.
@@ -86,6 +91,9 @@ class Application:
 
     def drain_events(self):
         now = time.monotonic()
+        if now - self.last_health_log >= 60:
+            log_info(f"health capture_alive={self.capture.thread.is_alive()} tray_alive={self.tray.thread.is_alive()} queue={self.events.qsize()}")
+            self.last_health_log = now
         for key, (created, _) in list(self.cache.items()):
             if now - created >= 300:
                 del self.cache[key]
@@ -99,12 +107,14 @@ class Application:
                 return False
             if kind == "selection":
                 text, bounds, generation, hwnd = payload
+                log_info(f"selection received chars={len(text)} generation={generation}")
                 if generation == self.capture.generation and self.settings_window is None and hwnd == win32gui.GetForegroundWindow():
                     self.generate(text, bounds)
             elif kind == "model":
                 revision, stage, content = payload
                 if revision == self.revision:
                     if stage == "error":
+                        log_exception("model job reported an error")
                         if self.preview_svg:
                             self.popup.render(self.preview_svg)
                             self.popup.status.set("本地规则预览 · AI 未完成：" + content)
@@ -147,6 +157,7 @@ class Application:
         return True
 
     def report_ui_error(self, error_type, error, traceback):
+        log_exception("Tk callback failed", error)
         # Do not persist exception text: it can contain selected text or provider details.
         message = f"界面更新失败（{error_type.__name__}），已恢复事件监听。请重新选择文本；可在托盘设置中查看此提示。"
         if message not in self.notices:
@@ -171,6 +182,7 @@ class Application:
         self.popup.hide()
 
     def generate(self, text, bounds):
+        log_info(f"generation requested chars={len(text)}")
         self.generation_started = time.perf_counter()
         self.first_graph_seconds = None
         try:
@@ -254,6 +266,7 @@ class Application:
         self.test_future = self.executor.submit(self.test_job.run)
 
     def quit(self):
+        log_info("application stopping")
         self.cancel_generation()
         if self.test_job:
             self.test_job.cancel()
