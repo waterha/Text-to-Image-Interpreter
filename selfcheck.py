@@ -415,6 +415,21 @@ def check_clipboard_compatibility():
                 assert state["data"][unicode_format] == "另一个应用刚写入的内容"
             if case == "unsupported":
                 send_input.assert_not_called()
+    with patch.object(copying, "snapshot", side_effect=copying.ClipboardCaptureError("opaque")), \
+         patch.object(copying, "document_application", return_value=True), \
+         patch.object(copying, "send_copy") as send_input, \
+         patch.object(copying, "read_change", return_value=(11, "Alt+Q 选中的文字")), \
+         patch.object(copying.win32clipboard, "GetClipboardSequenceNumber", return_value=10), \
+         patch.object(copying.win32api, "GetAsyncKeyState", return_value=0), \
+         patch.object(copying.win32gui, "CreateWindowEx", return_value=700), \
+         patch.object(copying.win32gui, "DestroyWindow"), \
+         patch.object(copying.time, "monotonic", side_effect=(0.0, 0.1, 0.2)), \
+         patch.object(copying.time, "sleep"):
+        result = copying.copy_selection(123, (20, 30), 2000, {600}, lambda: True,
+                                        allow_clipboard_replace=True)
+        assert result == ("Alt+Q 选中的文字", (20, 30, 21, 48))
+        send_input.assert_called_once()
+
     with patch.object(copying, "document_application", return_value=False), patch.object(copying, "send_copy") as send_input:
         assert copying.copy_selection(123, (0, 0), 2000, {600}, lambda: True) is None
         send_input.assert_not_called()

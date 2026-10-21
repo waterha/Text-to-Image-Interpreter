@@ -83,7 +83,7 @@ class SelectionCapture:
                     if not manual and not self.external_window(win32gui.WindowFromPoint(point)):
                         continue
                     try:
-                        result = self.read_selection(automation, module, hwnd, point)
+                        result = self.read_selection(automation, module, hwnd, point, allow_clipboard_replace=manual)
                         if generation != self.generation or hwnd != win32gui.GetForegroundWindow():
                             continue
                         if result:
@@ -107,7 +107,7 @@ class SelectionCapture:
         finally:
             comtypes.CoUninitialize()
 
-    def read_selection(self, automation, module, hwnd, point):
+    def read_selection(self, automation, module, hwnd, point, allow_clipboard_replace=False):
         generation = self.generation
         focused = automation.GetFocusedElement()
         if focused and (focused.CurrentIsPassword or focused.CurrentProcessId == os.getpid()):
@@ -154,5 +154,6 @@ class SelectionCapture:
                     return False
                 latest = automation.GetFocusedElement()
                 return bool(latest and not latest.CurrentIsPassword and latest.CurrentProcessId != os.getpid() and automation.CompareElements(focused, latest))
-            return copy_selection(hwnd, point, self.max_chars, processes, is_current)
+            return copy_selection(hwnd, point, self.max_chars, processes, is_current,
+                                  allow_clipboard_replace=allow_clipboard_replace)
         return None

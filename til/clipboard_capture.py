@@ -125,7 +125,7 @@ def restore(owner, sequence, saved):
         win32clipboard.CloseClipboard()
 
 
-def copy_selection(hwnd, point, max_chars, processes, is_current):
+def copy_selection(hwnd, point, max_chars, processes, is_current, allow_clipboard_replace=False):
     if not is_current() or not document_application(hwnd):
         return None
     deadline = time.monotonic() + .35
@@ -137,7 +137,15 @@ def copy_selection(hwnd, point, max_chars, processes, is_current):
     owner = win32gui.CreateWindowEx(0, "STATIC", "TILClipboard", 0, 0, 0, 0, 0, win32con.HWND_MESSAGE, 0, 0, None)
     copied_sequence = None
     try:
-        before, saved = snapshot(owner)
+        try:
+            before, saved = snapshot(owner)
+        except ClipboardCaptureError:
+            if not allow_clipboard_replace:
+                raise
+            # Alt+Q is an explicit request. If the existing clipboard contains
+            # an opaque object that cannot be round-tripped safely, still read
+            # the selected text and leave the copied text in the clipboard.
+            before, saved = win32clipboard.GetClipboardSequenceNumber(), None
         if not is_current() or win32clipboard.GetClipboardSequenceNumber() != before:
             return None
         send_copy()
@@ -161,7 +169,7 @@ def copy_selection(hwnd, point, max_chars, processes, is_current):
         raise ClipboardCaptureError("阅读器未及时提供复制结果；扫描件需要先 OCR，限制复制的 PDF 无法直接读取。请重新选择文本后按 Alt+Q 重试。")
     finally:
         try:
-            if copied_sequence is not None:
+            if copied_sequence is not None and saved is not None:
                 restore(owner, copied_sequence, saved)
         finally:
             win32gui.DestroyWindow(owner)
