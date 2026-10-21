@@ -66,10 +66,12 @@ class SelectionCapture:
         return bool(hwnd) and win32process.GetWindowThreadProcessId(hwnd)[1] != os.getpid()
 
     def run(self):
-        from comtypes.client import CreateObject, GetModule
-
-        comtypes.CoInitialize()
+        initialized = False
         try:
+            from comtypes.client import CreateObject, GetModule
+
+            comtypes.CoInitialize()
+            initialized = True
             module = GetModule("UIAutomationCore.dll")
             automation = CreateObject(module.CUIAutomation, interface=module.IUIAutomation)
             pressed, down_point, down_window, pending = False, (0, 0), 0, None
@@ -131,7 +133,8 @@ class SelectionCapture:
             log_exception("selection capture thread failed", error)
             self.publish("notice", "系统选区接口初始化失败；请重新选择文本后按 Alt+Q 重试。")
         finally:
-            comtypes.CoUninitialize()
+            if initialized:
+                comtypes.CoUninitialize()
             log_info("selection capture thread exited")
 
     def read_selection(self, automation, module, hwnd, point):
