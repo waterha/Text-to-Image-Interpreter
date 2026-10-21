@@ -148,6 +148,7 @@ class Application:
             elif kind == "demo":
                 self.show_demo()
             elif kind == "hotkey" and self.settings_window is None:
+                log_info("hotkey event queued selection read")
                 self.capture.request()
             elif kind == "notice":
                 if payload not in self.notices:
