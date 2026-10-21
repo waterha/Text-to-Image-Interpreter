@@ -7,7 +7,7 @@ import win32api
 import win32con
 import win32gui
 
-from til.diagnostics import exception as log_exception, info as log_info, warning as log_warning
+from til.diagnostics import exception as log_exception, info as log_info
 from til.icons import icon_bytes
 
 
@@ -39,35 +39,68 @@ class Tray:
         self.stopping = False
         self.restart_after = 0.0
         self.hotkey_registered = False
+        self.hotkey_notice = False
+        self.next_hotkey_retry = 0.0
+        self.icon = None
         self.thread = threading.Thread(target=self.run, name="Tray", daemon=True)
 
     def start(self):
-        if self.thread.is_alive():
+        if self.stopping or self.thread.is_alive():
             return
         self.thread = threading.Thread(target=self.run, name="Tray", daemon=True)
         self.thread.start()
         log_info("tray thread started")
 
     def ensure_running(self):
-        if self.stopping or self.thread.is_alive():
+        if self.stopping:
             return
         now = time.monotonic()
+        if self.thread.is_alive():
+            if self.hwnd and not self.hotkey_registered and now >= self.next_hotkey_retry:
+                self.next_hotkey_retry = now + 5
+                try:
+                    win32gui.PostMessage(self.hwnd, win32con.WM_APP + 1, 0, 0)
+                except pywintypes.error:
+                    pass  # Window may be between destruction and thread exit.
+            return
         if now >= self.restart_after:
-            self.restart_after = now + 1
+            self.restart_after = now + 5
             log_info("tray thread is not alive; restarting")
             self.start()
 
     def stop(self):
         self.stopping = True
         if self.hwnd:
-            win32gui.PostMessage(self.hwnd, win32con.WM_CLOSE, 0, 0)
+            try:
+                win32gui.PostMessage(self.hwnd, win32con.WM_CLOSE, 0, 0)
+            except pywintypes.error:
+                pass
+
+    def register_hotkey(self):
+        if self.hotkey_registered or self.stopping:
+            return
+        try:
+            # pywin32 raises on failure and returns None on success.
+            win32gui.RegisterHotKey(self.hwnd, 1, win32con.MOD_ALT | 0x4000, ord("Q"))
+        except pywintypes.error as error:
+            if not self.hotkey_notice:
+                log_exception("Alt+Q registration failed; will retry", error)
+                self.publish("notice", "Alt+Q 暂时被占用；释放后会自动重新注册。")
+                self.hotkey_notice = True
+        else:
+            self.hotkey_registered = True
+            self.hotkey_notice = False
+            log_info("Alt+Q registered")
 
     def add_icon(self):
         flags = win32gui.NIF_ICON | win32gui.NIF_MESSAGE | win32gui.NIF_TIP
         win32gui.Shell_NotifyIcon(win32gui.NIM_ADD, (self.hwnd, 1, flags, win32con.WM_USER + 20, self.icon, "TIL · 右键设置"))
 
     def run(self):
+        instance, atom = None, None
         try:
+            if self.stopping:
+                return
             instance = win32api.GetModuleHandle(None)
             self.taskbar_created = win32gui.RegisterWindowMessage("TaskbarCreated")
             window_class = win32gui.WNDCLASS()
@@ -78,28 +111,42 @@ class Tray:
             self.hwnd = win32gui.CreateWindow(atom, "TIL 后台服务", 0, 0, 0, 0, 0, 0, 0, instance, None)
             self.icon = _icon_handle(32)
             self.add_icon()
-            try:
-                self.hotkey_registered = bool(win32gui.RegisterHotKey(self.hwnd, 1, win32con.MOD_ALT | 0x4000, ord("Q")))
-            except pywintypes.error as error:
-                self.hotkey_registered = False
-                log_warning(f"Alt+Q registration failed [{type(error).__name__}]")
-                self.publish("notice", "Alt+Q 注册失败，可能被其他软件占用。")
-            else:
-                if self.hotkey_registered:
-                    log_info("Alt+Q registered")
-                else:
-                    log_warning("Alt+Q registration returned false")
-                    self.publish("notice", "Alt+Q 注册失败，可能被其他软件占用。")
-            win32gui.PumpMessages()
+            self.register_hotkey()
+            if not self.stopping:
+                win32gui.PumpMessages()
         except Exception as error:
             log_exception("tray thread failed", error)
-            self.publish("notice", "系统托盘初始化失败，请关闭后重新启动。")
+            self.publish("notice", "系统托盘暂时失效，后台将自动重新初始化。")
         finally:
+            # All window, hotkey, icon and class cleanup stays on the owning thread.
+            if self.hwnd:
+                try:
+                    win32gui.DestroyWindow(self.hwnd)
+                except pywintypes.error as error:
+                    log_exception("tray window cleanup failed", error)
+            self.hwnd = None
+            self.hotkey_registered = False
+            if self.icon:
+                try:
+                    win32gui.DestroyIcon(self.icon)
+                except pywintypes.error as error:
+                    log_exception("tray icon cleanup failed", error)
+                self.icon = None
+            if atom:
+                try:
+                    win32gui.UnregisterClass(atom, instance)
+                except pywintypes.error as error:
+                    log_exception("tray class cleanup failed", error)
             log_info("tray thread exited")
 
     def handle_message(self, hwnd, message, wparam, lparam):
         if message == self.taskbar_created:
-            self.add_icon()
+            try:
+                self.add_icon()
+            except pywintypes.error as error:
+                log_exception("tray icon restore failed", error)
+        elif message == win32con.WM_APP + 1:
+            self.register_hotkey()
         elif message == win32con.WM_USER + 20:
             if lparam == win32con.WM_RBUTTONUP:
                 menu = win32gui.CreatePopupMenu()
@@ -119,12 +166,19 @@ class Tray:
         elif message == win32con.WM_CLOSE:
             win32gui.DestroyWindow(hwnd)
         elif message == win32con.WM_DESTROY:
-            if self.hotkey_registered:
-                win32gui.UnregisterHotKey(hwnd, 1)
+            try:
+                if self.hotkey_registered:
+                    win32gui.UnregisterHotKey(hwnd, 1)
+            except pywintypes.error as error:
+                log_exception("hotkey cleanup failed", error)
+            try:
+                win32gui.Shell_NotifyIcon(win32gui.NIM_DELETE, (hwnd, 1))
+            except pywintypes.error:
+                pass  # Explorer may already have removed the icon.
+            finally:
                 self.hotkey_registered = False
-            win32gui.Shell_NotifyIcon(win32gui.NIM_DELETE, (hwnd, 1))
-            self.hwnd = None
-            win32gui.PostQuitMessage(0)
+                self.hwnd = None
+                win32gui.PostQuitMessage(0)
         else:
             return win32gui.DefWindowProc(hwnd, message, wparam, lparam)
         return 0
