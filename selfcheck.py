@@ -409,6 +409,14 @@ def check_transport(document):
         response_file.headers = {"Content-Type": "application/json"}
         job = ModelJob(replace(settings, api_format=api_format), "普通响应", lambda *event: None)
         assert "".join(job.chunks(response_file, time.monotonic() + 5)) == document
+        response_file.seek(0)
+        events = []
+        job.publish = lambda *event: events.append(event)
+        with patch('til.model.urllib.request.build_opener') as opener:
+            opener.return_value.open.return_value = response_file
+            job.run()
+        assert events[-1][0] == 'done', events
+        assert '存储层' in events[-1][1]
 
 
 def main():
@@ -464,6 +472,7 @@ def main():
     assert -1920 <= position_x <= -700 and 0 <= position_y <= 580
     check_transport('flowchart TD\na["存储层"]\na -->|包括| b["分布式缓存"]\na -->|包括| c["数据库"]\n')
     check_transport('```mermaid\nflowchart LR\na["存储层"]\na --> b["数据库"]\n```')
+    check_transport('<think>先分析原文</think>\n下面是关系图：\n```Mermaid\ngraph  TD;\na["存储层"]\na --> b["数据库"]\n```\n图解完成。')
     check_capture()
     check_hosted_document_capture()
     check_clipboard_compatibility()
@@ -486,11 +495,40 @@ def check_mermaid_stream():
     assert partials and "NoSQL" not in partials[0]
     assert 'n_a -->|包括| n_b' in stream.source
     assert "英文" in MERMAID_PROMPT
+    # Wrappers must not leak into the diagram, even across one-character chunks.
+    expected = stream.source
+    for document in (
+        '以下是关系图：\n```mermaid\n' + source + '\n```\n以上是图解。',
+        '\ufeff``` Mermaid\r\n' + source.replace('flowchart TD', 'flowchart\t TD;') + '\r\n```',
+        '~~~mermaid\n' + source + '\n~~~\n说明文字',
+        source.replace('flowchart TD', 'graph TD'),
+        '<think>分析原文\nflowchart LR\nx["不是答案"]\n</think>\n' + source,
+        '<analysis>内部推理</analysis>```mermaid\n' + source + '\n```',
+    ):
+        for size in (1, 7, len(document)):
+            wrapped = MermaidStream()
+            updates = []
+            for offset in range(0, len(document), size):
+                if wrapped.feed(document[offset:offset + size]):
+                    updates.append(wrapped.source)
+            wrapped.feed('', final=True)
+            assert wrapped.source == expected, wrapped.source
+            assert updates, 'Wrapped responses must still stream partial diagrams'
+    for direction in ('TD', 'TB', 'LR'):
+        spaced = MermaidStream()
+        spaced.feed(source.replace('flowchart TD', 'graph  ' + direction), final=True)
+        assert spaced.direction == direction
+    missing = MermaidStream()
+    assert not missing.feed('下面是解释，但尚未输出图。\n')
+    rejects(lambda: missing.feed('', final=True))
     incomplete = MermaidStream()
     assert not incomplete.feed('flowchart TD\na["A"]\na --> b["')
     rejects(lambda: incomplete.feed("", final=True))
     for invalid in (
         'sequenceDiagram\nA->>B: test',
+        '<think>\n' + source + '\n</think>',
+        '<think>尚未结束\n' + source,
+        '```mermaid\nflowchart TD\na["A"]\na --> b["B"]\nclick b callback\n```',
         'flowchart TD\nclick a "https://example.com"',
         'flowchart TD\n%%{init: {}}%%',
         'flowchart TD\na["<img src=x>"]',

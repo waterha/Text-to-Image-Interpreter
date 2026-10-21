@@ -24,6 +24,9 @@ class MermaidStream:
         self.buffer = ""
         self.total = 0
         self.direction = None
+        self.thinking = None
+        self.fence = None
+        self.closed = False
         self.nodes = {}
         self.edges = []
 
@@ -46,13 +49,32 @@ class MermaidStream:
             lines.append(self.buffer)
             self.buffer = ""
         for line in lines:
-            line = line.strip()
-            if not line or line in ("```mermaid", "```"):
+            line = line.strip().lstrip("\ufeff").strip()
+            if not line or self.closed:
                 continue
             if self.direction is None:
-                if not re.fullmatch(r"flowchart (TD|TB|LR)", line):
-                    raise ValueError("模型须输出 flowchart TD 或 flowchart LR 开头的 Mermaid。")
-                self.direction = line.split()[1]
+                # Some providers put reasoning in content rather than a separate field.
+                visible = []
+                for part in re.split(r"(</?(?:think|analysis)>)", line, flags=re.IGNORECASE):
+                    tag = part.lower()
+                    if tag in ("<think>", "<analysis>") and self.thinking is None:
+                        self.thinking = tag[1:-1]
+                    elif self.thinking and tag == f"</{self.thinking}>":
+                        self.thinking = None
+                    elif self.thinking is None:
+                        visible.append(part)
+                line = "".join(visible).strip()
+                fence = re.fullmatch(r"(`{3,}|~{3,})\s*(?:mermaid)?", line, re.IGNORECASE)
+                if fence:
+                    self.fence = fence[1]
+                    continue
+                header = re.fullmatch(r"(?:flowchart|graph)\s+(TD|TB|LR)\s*;?", line)
+                if header:
+                    self.direction = header[1]
+                # Wait for the actual graph instead of rejecting introductory prose.
+                continue
+            if self.fence and line == self.fence:
+                self.closed = True
                 continue
             match = STATEMENT.fullmatch(line)
             if not match:
@@ -73,6 +95,8 @@ class MermaidStream:
                     self.edges.append(edge)
             if len(self.nodes) > 8 or len(self.edges) > 12:
                 raise ValueError("Mermaid 图解超过 8 个节点或 12 条关系。")
+        if final and self.direction is None:
+            raise ValueError("已收到模型响应，但未找到 Mermaid 流程图（flowchart TD/LR 或 graph TD/LR）。请重试；这不代表模型连接不可用。")
         if final and (len(self.nodes) < 2 or not self.edges):
             raise ValueError("模型未返回完整的 Mermaid 关系图。")
         return before != self.source and bool(self.edges)
