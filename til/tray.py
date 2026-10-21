@@ -50,7 +50,7 @@ class Tray:
     def ensure_running(self):
         if self.stopping or self.thread.is_alive():
             return
-        now = time.monotonic() if "time" in globals() else 0
+        now = time.monotonic()
         if now >= self.restart_after:
             self.restart_after = now + 1
             log_info("tray thread is not alive; restarting")
