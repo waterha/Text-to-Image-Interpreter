@@ -11,6 +11,7 @@ import win32gui
 import win32process
 
 from til.clipboard_capture import ClipboardCaptureError, copy_selection
+from til.diagnostics import exception as log_exception, info as log_info
 from til.ocr import recognize_region
 
 
@@ -22,17 +23,34 @@ class SelectionCapture:
         self.copy_fallback = False
         self.last_selection = None
         self.generation = 0
+        self.restart_after = 0.0
         self.commands = queue.Queue(maxsize=1)
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self.run, name="SelectionCapture", daemon=True)
 
     def start(self):
+        if self.thread.is_alive():
+            return
+        if self.stop_event.is_set():
+            self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self.run, name="SelectionCapture", daemon=True)
         self.thread.start()
+        log_info("selection capture thread started")
+
+    def ensure_running(self):
+        if self.stop_event.is_set() or self.thread.is_alive():
+            return
+        now = time.monotonic()
+        if now >= self.restart_after:
+            self.restart_after = now + 1
+            log_info("selection capture thread is not alive; restarting")
+            self.start()
 
     def configure(self, enabled, max_chars, copy_fallback=False):
         self.enabled, self.max_chars = enabled, max_chars
         self.copy_fallback = copy_fallback
         self.generation += 1
+        log_info(f"selection capture mode enabled={enabled} generation={self.generation}")
 
     def request(self):
         try:
@@ -109,10 +127,12 @@ class SelectionCapture:
                     except Exception:
                         if manual:
                             self.publish("capture_notice", "读取选区失败。请重新选择文本后按 Alt+Q 重试。")
-        except Exception:
+        except Exception as error:
+            log_exception("selection capture thread failed", error)
             self.publish("notice", "系统选区接口初始化失败；请重新选择文本后按 Alt+Q 重试。")
         finally:
             comtypes.CoUninitialize()
+            log_info("selection capture thread exited")
 
     def read_selection(self, automation, module, hwnd, point):
         generation = self.generation
