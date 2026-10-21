@@ -39,5 +39,5 @@ def warning(message):
 
 
 def exception(context, error=None):
-    # Do not persist exception text: it may contain selected text or provider details.
-    logger().error("%s [%s]", context, type(error).__name__ if error else "Exception", exc_info=error is not None)
+    # Do not persist exception text or tracebacks: they may contain selected text or provider details.
+    logger().error("%s [%s]", context, type(error).__name__ if error else "Exception")
