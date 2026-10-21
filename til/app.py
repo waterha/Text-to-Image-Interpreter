@@ -46,6 +46,7 @@ class Application:
         self.generation_started = 0.0
         self.first_graph_seconds = None
         self.notices = []
+        self.root.report_callback_exception = self.report_ui_error
         try:
             self.settings = load_settings()
         except Exception:
@@ -73,6 +74,17 @@ class Application:
         self.tray.enabled = enabled
 
     def poll(self):
+        keep_polling = True
+        try:
+            keep_polling = self.drain_events()
+        except Exception as error:
+            self.report_ui_error(type(error), error, error.__traceback__)
+        finally:
+            # Re-arm even after failure, but never while a modal callback is still running.
+            if keep_polling:
+                self.root.after(60, self.poll)
+
+    def drain_events(self):
         now = time.monotonic()
         for key, (created, _) in list(self.cache.items()):
             if now - created >= 300:
@@ -84,7 +96,7 @@ class Application:
                 break
             if kind == "quit":
                 self.quit()
-                return
+                return False
             if kind == "selection":
                 text, bounds, generation, hwnd = payload
                 if generation == self.capture.generation and self.settings_window is None and hwnd == win32gui.GetForegroundWindow():
@@ -134,7 +146,19 @@ class Application:
                     self.settings_window.test_status.set("\n".join(self.notices))
             elif kind == "capture_notice":
                 messagebox.showinfo("TIL", payload, parent=self.root)
-        self.root.after(60, self.poll)
+        return True
+
+    def report_ui_error(self, error_type, error, traceback):
+        # Do not persist exception text: it can contain selected text or provider details.
+        message = f"界面更新失败（{error_type.__name__}），已恢复事件监听。请重新选择文本；可在托盘设置中查看此提示。"
+        if message not in self.notices:
+            self.notices.append(message)
+        self.cancel_generation()
+        try:
+            self.popup.error(message)
+        except Exception:
+            # Tk may itself be unavailable; keep the next poll alive for recovery/quit.
+            pass
 
     def cancel_generation(self):
         self.revision += 1

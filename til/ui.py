@@ -45,7 +45,7 @@ def action_button(parent, text, command, background, foreground, active_backgrou
 
 
 class Popup:
-    """选区上方的小图解浮窗：圆角、淡入并轻微上浮，不留大片空白。"""
+    """选区上方的小图解浮窗：立即显示，内容轻量动效，不留大片空白。"""
 
     HEADER = 42
     FOOTER = 26
@@ -59,7 +59,7 @@ class Popup:
         self.window.withdraw()
         self.window.overrideredirect(True)
         self.window.attributes("-topmost", True)
-        self.window.attributes("-alpha", 0.0)
+        self.window.attributes("-alpha", 1.0)
         self.window.configure(background=theme.LINE)
         theme.configure_styles(self.window)
         self.svg = ""
@@ -69,7 +69,6 @@ class Popup:
         self.shown_status = tk.StringVar(value="")
         self.status.trace_add("write", lambda *_: self.fit_status())
         self.close = close
-        self.frames = None
         self.pulse = None
         self.visible = False
         self.hover_card = None
@@ -161,31 +160,14 @@ class Popup:
         self.reveal(position_x, position_y, width, height)
 
     def reveal(self, position_x, position_y, width, height):
-        """淡入 + 从下方 8px 处上浮到位；已经显示时只调整尺寸，不重复动画。"""
+        """Visibility is synchronous; only diagram content may animate afterward."""
         if not self.window.winfo_exists():
             return
-        if self.visible:
-            self.window.attributes("-alpha", 1.0)
-            win32gui.SetWindowPos(self.hwnd, win32con.HWND_TOPMOST, position_x, position_y, width, height, win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
-            return
-        self.visible = True
-        start_y = position_y + 8
-        self.window.attributes("-alpha", 0.0)
+        self.window.attributes("-alpha", 1.0)
         self.window.deiconify()
-        win32gui.SetWindowPos(self.hwnd, win32con.HWND_TOPMOST, position_x, start_y, width, height, win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
-        steps = 10
-        self.frames = [self.window.after(index * 16, lambda index=index: self.float_step(index, steps, position_x, position_y, width, height)) for index in range(1, steps + 1)]
-
-    def float_step(self, index, steps, position_x, position_y, width, height):
-        if not self.window.winfo_exists():
-            return
-        ratio = index / steps
-        offset = round(8 * (1 - ratio) ** 3)
-        try:
-            self.window.attributes("-alpha", round(min(1.0, ratio * 1.35), 2))
-            win32gui.SetWindowPos(self.hwnd, win32con.HWND_TOPMOST, position_x, position_y + offset, width, height, win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
-        except tk.TclError:
-            pass
+        win32gui.SetWindowPos(self.hwnd, win32con.HWND_TOPMOST, position_x, position_y, width, height,
+                              win32con.SWP_NOACTIVATE | win32con.SWP_SHOWWINDOW)
+        self.visible = True
 
     def animate_pulse(self):
         """加载态的小呼吸点，让等待看起来是活的。"""
@@ -323,7 +305,7 @@ class Popup:
         self.stop_pulse()
         self.cancel_pending()
         self.visible = False
-        self.window.attributes("-alpha", 0.0)
+        self.window.attributes("-alpha", 1.0)
         self.window.withdraw()
 
     def cancel_pending(self):
@@ -334,12 +316,6 @@ class Popup:
             self.canvas.move("arrival", 0, -self.arrival_offset)
         self.arrival_offset = 0
         self.canvas.dtag("arrival", "arrival")
-        for frame in self.frames or ():
-            try:
-                self.window.after_cancel(frame)
-            except tk.TclError:
-                pass
-        self.frames = None
         pending = getattr(self, "pending_loading", None)
         if pending is not None:
             try:

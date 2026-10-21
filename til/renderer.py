@@ -36,3 +36,37 @@ def check_renderer():
     finally:
         if root is not None:
             root.destroy()
+
+
+def check_popup():
+    """Visible, offline EXE check of the actual popup, not just an offscreen Canvas."""
+    import tkinter as tk
+    import win32gui
+    from til.diagram import example_diagram, to_svg
+    from til.ui import Popup
+
+    root = tk.Tk()
+    root.withdraw()
+    popup = None
+    try:
+        popup = Popup(root, lambda: None)
+        for _ in range(2):
+            popup.loading((300, 500, 500, 520), "本地显示自检")
+            assert float(popup.window.attributes('-alpha')) == 1
+            popup.render(to_svg(example_diagram()), done=True)
+            deadline = time.monotonic() + .25
+            while time.monotonic() < deadline:
+                root.update()
+                time.sleep(.01)
+            assert win32gui.IsWindowVisible(popup.hwnd)
+            assert popup.canvas.find_all() and popup.svg
+            popup.hide()
+            root.update()
+            assert not win32gui.IsWindowVisible(popup.hwnd)
+        return {"ok": True, "popup_visible": True, "reopen": True, "offline": True}
+    except Exception as error:
+        return {"ok": False, "error_type": type(error).__name__}
+    finally:
+        if popup is not None:
+            popup.shutdown()
+        root.destroy()

@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import DEFAULT, patch
 
 import win32con
+import win32gui
 
 from til.capture import SelectionCapture
 from til.config import FORMATS, Settings, load_settings, save_settings
@@ -608,13 +609,15 @@ def check_native_renderer():
         popup = Popup(root, lambda: None)
         try:
             popup.render(stream.source, done=True)
+            assert float(popup.window.attributes('-alpha')) == 1, 'Visibility must not depend on animation timers'
+            assert win32gui.IsWindowVisible(popup.hwnd)
             popup.hide()
             deadline = time.monotonic() + .25
             while time.monotonic() < deadline:
                 root.update()
                 time.sleep(.01)
             assert popup.window.state() == 'withdrawn', 'Animation resurrected a cancelled popup'
-            assert not popup.visible and popup.frames is None
+            assert not popup.visible
             assert not popup.content_frames and not popup.canvas.find_withtag('arrival')
             popup.render(stream.source, done=True)
             deadline = time.monotonic() + .3
@@ -640,7 +643,43 @@ def check_native_renderer():
             popup.shutdown()
     finally:
         root.destroy()
+    check_ui_recovery()
     print(json.dumps(result))
+
+
+def check_ui_recovery():
+    import tkinter as tk
+    from til.app import Application
+    from til.tray import Tray
+
+    with patch('til.app.load_settings', return_value=Settings(endpoint='https://example.com/v1', model='test')), \
+         patch.object(SelectionCapture, 'start'), patch.object(Tray, 'start'), \
+         patch('til.app.win32gui.GetForegroundWindow', return_value=123):
+        application = Application()
+        try:
+            # An OS/Tk error used to consume the only poll timer, silently losing all later events.
+            with patch.object(application.popup, 'loading', side_effect=tk.TclError('private selected content')):
+                application.publish('selection', ('测试文本', (300, 500, 500, 520), application.capture.generation, 123))
+                application.publish('demo', None)
+                deadline = time.monotonic() + .6
+                while time.monotonic() < deadline:
+                    application.root.update()
+                    time.sleep(.01)
+            assert application.events.empty(), 'UI error permanently stopped the event queue'
+            assert any('TclError' in notice for notice in application.notices)
+            assert all('private selected content' not in notice for notice in application.notices)
+            assert application.popup.window.winfo_ismapped()
+            assert float(application.popup.window.attributes('-alpha')) == 1
+            assert '本地示例' in application.popup.status.get()
+            application.hide_popup()
+            application.publish('demo', None)
+            deadline = time.monotonic() + .2
+            while time.monotonic() < deadline:
+                application.root.update()
+                time.sleep(.01)
+            assert win32gui.IsWindowVisible(application.popup.hwnd), 'Subsequent tray event did not reopen the popup'
+        finally:
+            application.quit()
 
 
 if __name__ == '__main__':
