@@ -351,7 +351,7 @@ class SettingsWindow:
         self.window.protocol("WM_DELETE_WINDOW", close)
         self.window.bind("<Escape>", lambda event: close())
         self.values = {name: tk.StringVar(value=str(getattr(current, name))) for name in ("provider", "api_format", "endpoint", "api_key", "model", "max_chars", "timeout")}
-        self.enabled = tk.BooleanVar(value=current.auto_capture)
+        self.trigger_mode = tk.StringVar(value=current.trigger_mode)
         self.copy_fallback = tk.BooleanVar(value=current.copy_fallback)
         self.test_status = tk.StringVar(value="未连接 · 选择格式并填写你的模型服务")
         tk.Frame(self.window, background=theme.ACCENT, height=4).pack(fill="x")
@@ -377,8 +377,14 @@ class SettingsWindow:
                 field = ttk.Entry(fields, textvariable=self.values[name], width=40, show="●" if name == "api_key" else "", font=theme.font(10))
             field.grid(row=row, column=1, sticky="ew", pady=5)
         self.note(service, "地址可填 https://供应商/v1 或完整接口路径；本机服务允许 HTTP。API Key 使用 Windows 当前账户加密保存，不写入日志。", (12, 0))
-        privacy = self.card(page, "02", "划词与隐私")
-        ttk.Checkbutton(privacy, text="启用自动划词图解（选中的文字将发送到上述供应商）", variable=self.enabled, style="Card.TCheckbutton").pack(anchor="w", pady=(0, 5))
+        privacy = self.card(page, "02", "触发方式与隐私")
+        for value, label in (("hotkey", "快捷键触发（默认） · 选中文字后按 Alt+Q"),
+                             ("automatic", "自动划词 · 鼠标拖选或双击选中后自动图解")):
+            tk.Radiobutton(privacy, text=label, variable=self.trigger_mode, value=value,
+                           background=theme.SURFACE, foreground=theme.INK, selectcolor=theme.SURFACE,
+                           activebackground=theme.TINT, activeforeground=theme.ACCENT,
+                           font=theme.font(10), anchor="w", highlightthickness=0).pack(anchor="w", pady=(0, 4))
+        self.note(privacy, "仅自动划词模式会在选中后主动发送文字；自动模式也可按 Alt+Q。切换后点击保存生效。", (0, 8))
         ttk.Checkbutton(privacy, text="PDF / 文档兼容划词（读不到时临时 Ctrl+C，并尝试还原剪贴板）", variable=self.copy_fallback, style="Card.TCheckbutton").pack(anchor="w")
         limits = tk.Frame(privacy, background=theme.SURFACE)
         limits.pack(fill="x", pady=(12, 0))
@@ -428,7 +434,7 @@ class SettingsWindow:
             values["max_chars"], values["timeout"] = int(values["max_chars"]), int(values["timeout"])
         except ValueError as error:
             raise ValueError("最多字数和超时必须为整数。") from error
-        settings = Settings(**values, auto_capture=self.enabled.get(), copy_fallback=self.copy_fallback.get())
+        settings = Settings(**values, trigger_mode=self.trigger_mode.get(), copy_fallback=self.copy_fallback.get())
         settings.validate()
         return settings
 

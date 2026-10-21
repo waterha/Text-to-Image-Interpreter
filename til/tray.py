@@ -32,7 +32,7 @@ def _icon_handle(size=32):
 class Tray:
     def __init__(self, publish):
         self.publish = publish
-        self.enabled = False
+        self.trigger_mode = "hotkey"
         self.hwnd = None
         self.thread = threading.Thread(target=self.run, name="Tray", daemon=True)
 
@@ -73,14 +73,14 @@ class Tray:
         elif message == win32con.WM_USER + 20:
             if lparam == win32con.WM_RBUTTONUP:
                 menu = win32gui.CreatePopupMenu()
-                for identity, label in ((1, "暂停自动划词" if self.enabled else "启用自动划词"), (2, "设置…"), (3, "查看示例图解"), (4, "退出")):
+                for identity, label in ((1, "触发方式：自动划词…" if self.trigger_mode == "automatic" else "触发方式：Alt+Q（默认）…"), (2, "设置…"), (3, "查看示例图解"), (4, "退出")):
                     win32gui.AppendMenu(menu, win32con.MF_STRING, identity, label)
                 win32gui.SetForegroundWindow(hwnd)
                 point = win32gui.GetCursorPos()
                 selected = win32gui.TrackPopupMenu(menu, win32con.TPM_RETURNCMD | win32con.TPM_NONOTIFY | win32con.TPM_RIGHTBUTTON, *point, 0, hwnd, None)
                 win32gui.DestroyMenu(menu)
                 win32gui.PostMessage(hwnd, win32con.WM_NULL, 0, 0)
-                action = {1: "toggle", 2: "settings", 3: "demo", 4: "quit"}.get(selected)
+                action = {1: "settings", 2: "settings", 3: "demo", 4: "quit"}.get(selected)
                 if action:
                     self.publish(action, None)
         elif message == win32con.WM_HOTKEY:

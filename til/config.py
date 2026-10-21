@@ -21,12 +21,14 @@ class Settings:
     endpoint: str = ""
     api_key: str = ""
     model: str = ""
-    auto_capture: bool = False
+    trigger_mode: str = "hotkey"
     copy_fallback: bool = False
     max_chars: int = 2000
     timeout: int = 45
 
     def validate(self):
+        if self.trigger_mode not in ("hotkey", "automatic"):
+            raise ValueError("触发方式须为快捷键或自动划词。")
         if not self.provider.strip() or not self.model.strip():
             raise ValueError("请填写供应商名称和模型 ID。")
         if self.api_format not in FORMATS:
@@ -56,6 +58,8 @@ def load_settings(path=None):
     data = json.loads(path.read_text(encoding="utf-8"))
     secret = data.pop("encrypted_api_key", "")
     data.pop("api_key", None)
+    # Old automatic capture is not implicit consent to the new explicit trigger mode.
+    data.pop("auto_capture", None)
     settings = Settings(**{key: value for key, value in data.items() if key in Settings.__dataclass_fields__})
     if secret:
         settings.api_key = win32crypt.CryptUnprotectData(base64.b64decode(secret, validate=True), None, None, None, 1)[1].decode("utf-8")

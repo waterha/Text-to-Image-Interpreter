@@ -115,7 +115,7 @@ def check_background_lifecycle():
     from til.app import Application, main as run_application
     from til.tray import Tray
 
-    configured = Settings(endpoint="https://example.com/v1", model="test", auto_capture=True)
+    configured = Settings(endpoint="https://example.com/v1", model="test", trigger_mode="automatic")
     for saved in (Settings(), configured, ValueError("broken configuration")):
         with patch("til.app.load_settings", side_effect=[saved]), \
              patch("til.app.tk.Tk") as root_factory, \
@@ -146,8 +146,6 @@ def check_background_lifecycle():
                     application.generate("待解释的文本", (0, 0, 100, 20))
                     application.popup.error.assert_called_once()
                     settings_factory.assert_not_called()
-                    application.toggle()
-                    settings_factory.assert_not_called()
                 with patch.multiple("til.tray.win32gui", CreatePopupMenu=DEFAULT,
                                     AppendMenu=DEFAULT, SetForegroundWindow=DEFAULT,
                                     GetCursorPos=DEFAULT, TrackPopupMenu=DEFAULT,
@@ -163,7 +161,7 @@ def check_background_lifecycle():
                     assert "无法读取原有配置" in application.settings_window.test_status.set.call_args.args[0]
                 application.close_settings()
                 assert application.settings_window is None
-                assert application.capture.enabled == application.settings.auto_capture
+                assert application.capture.enabled == (application.settings.trigger_mode == "automatic")
                 application.root.destroy.assert_not_called()
             finally:
                 application.quit()
@@ -176,6 +174,104 @@ def check_background_lifecycle():
         application_factory.assert_not_called()
         dialog.assert_not_called()
         close_handle.assert_called_once_with(123)
+
+
+def check_trigger_modes():
+    from til.app import Application
+    from til.tray import Tray
+
+    configured = Settings(endpoint="https://example.com/v1", model="test", api_key="test-secret", copy_fallback=True)
+    assert configured.trigger_mode == "hotkey"
+    rejects(lambda: replace(configured, trigger_mode="unknown").validate())
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "settings.json"
+        save_settings(configured, path)
+        legacy = json.loads(path.read_text(encoding="utf-8"))
+        legacy.pop("trigger_mode")
+        legacy["auto_capture"] = True
+        path.write_text(json.dumps(legacy), encoding="utf-8")
+        unchanged = path.read_bytes()
+        loaded = load_settings(path)
+        assert loaded == configured, 'Upgrade must retain provider/secret/compatibility, not automatic triggering'
+        assert path.read_bytes() == unchanged, 'Loading settings must not rewrite the file'
+        for mode in ("automatic", "hotkey"):
+            save_settings(replace(loaded, trigger_mode=mode), path)
+            assert load_settings(path).trigger_mode == mode
+            stored = json.loads(path.read_text(encoding="utf-8"))
+            assert 'auto_capture' not in stored and stored['trigger_mode'] == mode
+
+    with patch('til.app.load_settings', return_value=configured), \
+         patch('til.app.tk.Tk'), patch('til.app.ttk.Style'), patch('til.app.Popup'), \
+         patch('til.app.SettingsWindow'), patch('til.app.save_settings'), \
+         patch.object(SelectionCapture, 'start'), patch.object(Tray, 'start'):
+        application = Application()
+        try:
+            assert not application.capture.enabled
+            assert application.tray.trigger_mode == 'hotkey'
+            application.tray.taskbar_created = win32con.WM_USER + 99
+            with patch.object(application.capture, 'request') as capture_request:
+                application.tray.handle_message(1, win32con.WM_HOTKEY, 1, 0)
+                application.poll()
+                capture_request.assert_called_once()
+                application.open_settings()
+                application.publish('hotkey', None)
+                application.poll()
+                capture_request.assert_called_once()  # Never read settings/API-key input as selected text.
+            application.close_settings()
+            assert not application.capture.enabled
+            old_generation = application.capture.generation
+            application.save(replace(configured, trigger_mode='automatic'))
+            assert application.capture.enabled and application.tray.trigger_mode == 'automatic'
+            with patch.object(application, 'generate') as generate, patch('til.app.win32gui.GetForegroundWindow', return_value=123):
+                application.publish('selection', ('old selection', (0, 0, 20, 20), old_generation, 123))
+                application.poll()
+                generate.assert_not_called()
+            application.open_settings()
+            assert not application.capture.enabled
+            application.close_settings()
+            assert application.capture.enabled, 'Cancel settings must restore the saved mode'
+            application.save(replace(configured, trigger_mode='hotkey'))
+            assert not application.capture.enabled
+            with patch.multiple('til.tray.win32gui', CreatePopupMenu=DEFAULT, AppendMenu=DEFAULT,
+                                SetForegroundWindow=DEFAULT, GetCursorPos=DEFAULT, TrackPopupMenu=DEFAULT,
+                                DestroyMenu=DEFAULT, PostMessage=DEFAULT) as native:
+                native['GetCursorPos'].return_value = (10, 10)
+                native['TrackPopupMenu'].return_value = 1
+                application.tray.handle_message(1, win32con.WM_USER + 20, 0, win32con.WM_RBUTTONUP)
+                assert 'Alt+Q' in native['AppendMenu'].call_args_list[0].args[-1]
+            with patch.object(application, 'open_settings') as open_settings:
+                application.poll()
+                open_settings.assert_called_once()
+            assert application.settings.trigger_mode == 'hotkey', 'Tray entry must not silently enable auto mode'
+        finally:
+            application.quit()
+
+    # Drive the actual capture loop: the same drag must do nothing in hotkey mode.
+    for automatic, manual, expected in ((False, False, 0), (False, True, 1), (True, False, 1)):
+        events = []
+        capture = SelectionCapture(lambda *event: events.append(event))
+        capture.configure(automatic, 2000)
+        if manual:
+            capture.commands.put((123, (20, 30), capture.generation))
+        tick = [0]
+
+        def wait(_):
+            tick[0] += 1
+            return tick[0] > 7
+
+        with patch.object(capture.stop_event, 'wait', side_effect=wait), \
+             patch('til.capture.comtypes.CoInitialize'), patch('til.capture.comtypes.CoUninitialize'), \
+             patch('comtypes.client.GetModule'), patch('comtypes.client.CreateObject'), \
+             patch('til.capture.time.monotonic', side_effect=lambda: tick[0] * .1), \
+             patch('til.capture.win32api.GetAsyncKeyState', side_effect=lambda key: 0x8000 if tick[0] == 2 else 0), \
+             patch('til.capture.win32api.GetCursorPos', side_effect=lambda: (0, 0) if tick[0] == 2 else (20, 30)), \
+             patch('til.capture.win32gui.GetForegroundWindow', return_value=123), \
+             patch('til.capture.win32gui.WindowFromPoint', return_value=123), \
+             patch.object(capture, 'external_window', return_value=True), \
+             patch.object(capture, 'read_selection', return_value=('选中的语句', (0, 0, 20, 20))) as read:
+            capture.run()
+        assert read.call_count == expected, (automatic, manual, read.call_count)
+        assert len(events) == expected and all(kind == 'selection' for kind, _ in events), events
 
 
 def check_capture():
@@ -451,6 +547,7 @@ def main():
     check_transport('+a 存储层\n+b 缓存\na>b 包括\n+c 数据库\na>c 包括\n')
     check_transport('```dsl\n+a 存储层\n+b 数据库\na>b 包括\n```')
     check_transport('<think>先分析原文</think>\n下面是关系图：\n```DSL\n+a 存储层\n+b 数据库\na>b 包括\n```\n图解完成。')
+    check_trigger_modes()
     check_capture()
     check_hosted_document_capture()
     check_clipboard_compatibility()
@@ -643,8 +740,34 @@ def check_native_renderer():
             popup.shutdown()
     finally:
         root.destroy()
+    check_trigger_settings_ui()
     check_ui_recovery()
     print(json.dumps(result))
+
+
+def check_trigger_settings_ui():
+    import tkinter as tk
+    from til.ui import SettingsWindow
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        settings = Settings(endpoint="https://example.com/v1", model="test")
+        saved = []
+        window = SettingsWindow(root, settings, saved.append, lambda *_: None, lambda: None, lambda: None)
+        try:
+            assert window.trigger_mode.get() == 'hotkey'
+            assert window.read().trigger_mode == 'hotkey'
+            window.trigger_mode.set('automatic')
+            window.save()
+            assert saved[-1].trigger_mode == 'automatic'
+            window.trigger_mode.set('hotkey')
+            window.save()
+            assert saved[-1].trigger_mode == 'hotkey'
+        finally:
+            window.window.destroy()
+    finally:
+        root.destroy()
 
 
 def check_ui_recovery():

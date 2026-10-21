@@ -53,7 +53,7 @@ class Application:
             self.settings = Settings()
             self.notices.append("无法读取原有配置或解密 API Key。原文件未被改动，请检查设置。")
         if demo:
-            self.settings = replace(self.settings, auto_capture=False)
+            self.settings = replace(self.settings, trigger_mode="hotkey")
         self.capture = SelectionCapture(self.publish)
         self.tray = Tray(self.publish)
         self.popup = Popup(self.root, self.hide_popup)
@@ -69,9 +69,9 @@ class Application:
         self.events.put((kind, payload))
 
     def apply_capture(self):
-        enabled = self.settings.auto_capture and self.settings_window is None
+        enabled = self.settings.trigger_mode == "automatic" and self.settings_window is None
         self.capture.configure(enabled, self.settings.max_chars, self.settings.copy_fallback)
-        self.tray.enabled = enabled
+        self.tray.trigger_mode = self.settings.trigger_mode
 
     def poll(self):
         keep_polling = True
@@ -131,8 +131,6 @@ class Application:
                 revision, stage, content = payload
                 if revision == self.test_revision and self.settings_window and stage in ("done", "error"):
                     self.settings_window.test_result(stage == "done", content)
-            elif kind == "toggle":
-                self.toggle()
             elif kind == "settings":
                 self.open_settings()
             elif kind == "demo":
@@ -244,27 +242,6 @@ class Application:
         self.cache.clear()
         self.notices.clear()
         self.close_settings()
-
-    def toggle(self):
-        if self.settings_window:
-            return
-        if not self.settings.auto_capture:
-            try:
-                self.settings.validate()
-            except ValueError:
-                messagebox.showinfo("尚未配置模型", "请右键托盘图标选择“设置”，完成配置后再启用自动划词。", parent=self.root)
-                return
-            if not messagebox.askyesno("启用自动划词", f"之后选中的文字将自动发送给 {self.settings.provider}。\n请避免选择敏感内容。是否启用？", parent=self.root):
-                return
-        updated = replace(self.settings, auto_capture=not self.settings.auto_capture)
-        try:
-            save_settings(updated)
-        except Exception:
-            messagebox.showerror("保存失败", "未能保存开关状态，原设置保持不变。", parent=self.root)
-            return
-        self.settings = updated
-        self.apply_capture()
-        self.hide_popup()
 
     def test(self, settings):
         self.test_revision += 1
