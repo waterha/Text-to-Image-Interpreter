@@ -7,7 +7,7 @@ import win32api
 import win32con
 import win32gui
 
-from til.diagnostics import exception as log_exception, info as log_info
+from til.diagnostics import exception as log_exception, info as log_info, warning as log_warning
 from til.icons import icon_bytes
 
 
@@ -38,6 +38,7 @@ class Tray:
         self.hwnd = None
         self.stopping = False
         self.restart_after = 0.0
+        self.hotkey_registered = False
         self.thread = threading.Thread(target=self.run, name="Tray", daemon=True)
 
     def start(self):
@@ -78,9 +79,17 @@ class Tray:
             self.icon = _icon_handle(32)
             self.add_icon()
             try:
-                win32gui.RegisterHotKey(self.hwnd, 1, win32con.MOD_ALT | 0x4000, ord("Q"))
-            except pywintypes.error:
+                self.hotkey_registered = bool(win32gui.RegisterHotKey(self.hwnd, 1, win32con.MOD_ALT | 0x4000, ord("Q")))
+            except pywintypes.error as error:
+                self.hotkey_registered = False
+                log_warning(f"Alt+Q registration failed [{type(error).__name__}]")
                 self.publish("notice", "Alt+Q 注册失败，可能被其他软件占用。")
+            else:
+                if self.hotkey_registered:
+                    log_info("Alt+Q registered")
+                else:
+                    log_warning("Alt+Q registration returned false")
+                    self.publish("notice", "Alt+Q 注册失败，可能被其他软件占用。")
             win32gui.PumpMessages()
         except Exception as error:
             log_exception("tray thread failed", error)
@@ -105,11 +114,14 @@ class Tray:
                 if action:
                     self.publish(action, None)
         elif message == win32con.WM_HOTKEY:
+            log_info("Alt+Q received")
             self.publish("hotkey", None)
         elif message == win32con.WM_CLOSE:
             win32gui.DestroyWindow(hwnd)
         elif message == win32con.WM_DESTROY:
-            win32gui.UnregisterHotKey(hwnd, 1)
+            if self.hotkey_registered:
+                win32gui.UnregisterHotKey(hwnd, 1)
+                self.hotkey_registered = False
             win32gui.Shell_NotifyIcon(win32gui.NIM_DELETE, (hwnd, 1))
             self.hwnd = None
             win32gui.PostQuitMessage(0)
