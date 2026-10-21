@@ -1,11 +1,13 @@
 import os
 import threading
+import time
 
 import pywintypes
 import win32api
 import win32con
 import win32gui
 
+from til.diagnostics import exception as log_exception, info as log_info
 from til.icons import icon_bytes
 
 
@@ -34,12 +36,28 @@ class Tray:
         self.publish = publish
         self.trigger_mode = "hotkey"
         self.hwnd = None
+        self.stopping = False
+        self.restart_after = 0.0
         self.thread = threading.Thread(target=self.run, name="Tray", daemon=True)
 
     def start(self):
+        if self.thread.is_alive():
+            return
+        self.thread = threading.Thread(target=self.run, name="Tray", daemon=True)
         self.thread.start()
+        log_info("tray thread started")
+
+    def ensure_running(self):
+        if self.stopping or self.thread.is_alive():
+            return
+        now = time.monotonic() if "time" in globals() else 0
+        if now >= self.restart_after:
+            self.restart_after = now + 1
+            log_info("tray thread is not alive; restarting")
+            self.start()
 
     def stop(self):
+        self.stopping = True
         if self.hwnd:
             win32gui.PostMessage(self.hwnd, win32con.WM_CLOSE, 0, 0)
 
@@ -64,8 +82,11 @@ class Tray:
             except pywintypes.error:
                 self.publish("notice", "Alt+Q 注册失败，可能被其他软件占用。")
             win32gui.PumpMessages()
-        except Exception:
+        except Exception as error:
+            log_exception("tray thread failed", error)
             self.publish("notice", "系统托盘初始化失败，请关闭后重新启动。")
+        finally:
+            log_info("tray thread exited")
 
     def handle_message(self, hwnd, message, wparam, lparam):
         if message == self.taskbar_created:
