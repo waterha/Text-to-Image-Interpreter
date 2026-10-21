@@ -330,6 +330,12 @@ def check_hosted_document_capture():
             copied.reset_mock()
             assert capture.read_selection(automation, module, 123, (40, 50)) is None
             copied.assert_not_called()
+            document.CurrentIsPassword = False
+            capture.last_selection = (123, (20, 30, 120, 80), time.monotonic())
+            with patch('til.capture.recognize_region', return_value='禁止复制文档的 OCR 文字') as ocr:
+                assert capture.read_selection(automation, module, 123, (40, 50)) == ('禁止复制文档的 OCR 文字', (20, 30, 120, 80))
+                ocr.assert_called_once_with((20, 30, 120, 80), 2000)
+            copied.assert_not_called()
 
 
 def check_clipboard_compatibility():
@@ -399,37 +405,22 @@ def check_clipboard_compatibility():
              patch.object(copying.time, "monotonic", side_effect=now), patch.object(copying.time, "sleep"):
             try:
                 result = copying.copy_selection(123, (20, 30), 2000, {600}, current)
-                assert case not in ("unchanged", "foreign", "unsupported"), case
-                if case in ("success", "busy", "empty", "delayed_render"):
+                assert case not in ("unchanged", "foreign"), case
+                if case in ("success", "busy", "empty", "delayed_render", "unsupported"):
                     assert result == ("新选中的 PDF 文本", (20, 30, 21, 48))
                 else:
                     assert result is None
             except copying.ClipboardCaptureError:
-                assert case in ("unchanged", "foreign", "unsupported"), case
+                assert case in ("unchanged", "foreign"), case
             assert not state["locked"]
-            if case not in ("foreign", "later_change"):
+            if case not in ("foreign", "later_change", "unsupported"):
                 assert state["data"] == original, case
             if case == "foreign":
                 assert state["owner"] == 456 and state["data"][unicode_format] == "新选中的 PDF 文本"
             if case == "later_change":
                 assert state["data"][unicode_format] == "另一个应用刚写入的内容"
             if case == "unsupported":
-                send_input.assert_not_called()
-    with patch.object(copying, "snapshot", side_effect=copying.ClipboardCaptureError("opaque")), \
-         patch.object(copying, "document_application", return_value=True), \
-         patch.object(copying, "send_copy") as send_input, \
-         patch.object(copying, "read_change", return_value=(11, "Alt+Q 选中的文字")), \
-         patch.object(copying.win32clipboard, "GetClipboardSequenceNumber", return_value=10), \
-         patch.object(copying.win32api, "GetAsyncKeyState", return_value=0), \
-         patch.object(copying.win32gui, "CreateWindowEx", return_value=700), \
-         patch.object(copying.win32gui, "DestroyWindow"), \
-         patch.object(copying.time, "monotonic", side_effect=(0.0, 0.1, 0.2)), \
-         patch.object(copying.time, "sleep"):
-        result = copying.copy_selection(123, (20, 30), 2000, {600}, lambda: True,
-                                        allow_clipboard_replace=True)
-        assert result == ("Alt+Q 选中的文字", (20, 30, 21, 48))
-        send_input.assert_called_once()
-
+                send_input.assert_called_once()
     with patch.object(copying, "document_application", return_value=False), patch.object(copying, "send_copy") as send_input:
         assert copying.copy_selection(123, (0, 0), 2000, {600}, lambda: True) is None
         send_input.assert_not_called()

@@ -11,6 +11,7 @@ import win32gui
 import win32process
 
 from til.clipboard_capture import ClipboardCaptureError, copy_selection
+from til.ocr import recognize_region
 
 
 class SelectionCapture:
@@ -19,6 +20,7 @@ class SelectionCapture:
         self.enabled = False
         self.max_chars = 2000
         self.copy_fallback = False
+        self.last_selection = None
         self.generation = 0
         self.commands = queue.Queue(maxsize=1)
         self.stop_event = threading.Event()
@@ -62,15 +64,20 @@ class SelectionCapture:
                     pass
                 now = time.monotonic()
                 mouse_down = bool(win32api.GetAsyncKeyState(0x01) & 0x8000)
-                if self.enabled and mouse_down and not pressed:
+                if mouse_down and not pressed:
                     down_point, down_window = win32api.GetCursorPos(), win32gui.GetForegroundWindow()
-                    pending = None
-                if self.enabled and pressed and not mouse_down:
+                    if self.enabled:
+                        pending = None
+                if pressed and not mouse_down:
                     point = win32api.GetCursorPos()
                     moved = abs(point[0] - down_point[0]) + abs(point[1] - down_point[1]) >= 5
                     double_click = now - last_click < .5 and abs(point[0] - last_click_point[0]) + abs(point[1] - last_click_point[1]) < 8
                     if moved or double_click:
-                        pending = (now + .08, down_window, point, self.generation, False)
+                        left, right = sorted((down_point[0], point[0]))
+                        top, bottom = sorted((down_point[1], point[1]))
+                        self.last_selection = (down_window, (left, top, right, bottom), now)
+                        if self.enabled:
+                            pending = (now + .08, down_window, point, self.generation, False)
                     last_click, last_click_point = now, point
                 pressed = mouse_down
                 if pending and now >= pending[0] and not mouse_down:
@@ -83,7 +90,7 @@ class SelectionCapture:
                     if not manual and not self.external_window(win32gui.WindowFromPoint(point)):
                         continue
                     try:
-                        result = self.read_selection(automation, module, hwnd, point, allow_clipboard_replace=manual)
+                        result = self.read_selection(automation, module, hwnd, point)
                         if generation != self.generation or hwnd != win32gui.GetForegroundWindow():
                             continue
                         if result:
@@ -107,7 +114,7 @@ class SelectionCapture:
         finally:
             comtypes.CoUninitialize()
 
-    def read_selection(self, automation, module, hwnd, point, allow_clipboard_replace=False):
+    def read_selection(self, automation, module, hwnd, point):
         generation = self.generation
         focused = automation.GetFocusedElement()
         if focused and (focused.CurrentIsPassword or focused.CurrentProcessId == os.getpid()):
@@ -148,12 +155,16 @@ class SelectionCapture:
                 except (comtypes.COMError, OSError):
                     pass
                 candidate = automation.ControlViewWalker.GetParentElement(candidate)
+        selection = self.last_selection
+        if selection and selection[0] == hwnd and time.monotonic() - selection[2] <= 10:
+            text = recognize_region(selection[1], self.max_chars)
+            if text:
+                return text, selection[1]
         if self.copy_fallback and focused and pointed and focused.CurrentProcessId in processes and pointed.CurrentProcessId in processes:
             def is_current():
                 if generation != self.generation or self.stop_event.is_set() or hwnd != win32gui.GetForegroundWindow():
                     return False
                 latest = automation.GetFocusedElement()
                 return bool(latest and not latest.CurrentIsPassword and latest.CurrentProcessId != os.getpid() and automation.CompareElements(focused, latest))
-            return copy_selection(hwnd, point, self.max_chars, processes, is_current,
-                                  allow_clipboard_replace=allow_clipboard_replace)
+            return copy_selection(hwnd, point, self.max_chars, processes, is_current)
         return None

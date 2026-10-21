@@ -125,7 +125,7 @@ def restore(owner, sequence, saved):
         win32clipboard.CloseClipboard()
 
 
-def copy_selection(hwnd, point, max_chars, processes, is_current, allow_clipboard_replace=False):
+def copy_selection(hwnd, point, max_chars, processes, is_current):
     if not is_current() or not document_application(hwnd):
         return None
     deadline = time.monotonic() + .35
@@ -140,11 +140,10 @@ def copy_selection(hwnd, point, max_chars, processes, is_current, allow_clipboar
         try:
             before, saved = snapshot(owner)
         except ClipboardCaptureError:
-            if not allow_clipboard_replace:
-                raise
-            # Alt+Q is an explicit request. If the existing clipboard contains
-            # an opaque object that cannot be round-tripped safely, still read
-            # the selected text and leave the copied text in the clipboard.
+            # The clipboard fallback is shared by automatic and Alt+Q triggers.
+            # If its old contents are opaque, keep reading the selected text;
+            # the copied text may remain in the clipboard because restoration
+            # is not safe.
             before, saved = win32clipboard.GetClipboardSequenceNumber(), None
         if not is_current() or win32clipboard.GetClipboardSequenceNumber() != before:
             return None

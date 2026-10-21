@@ -1,2 +1,13 @@
 comtypes>=1.4.8,<2
 pywin32>=308,<400
+Pillow>=12,<13
+winrt-runtime>=3.2,<4
+winrt-Windows.Foundation>=3.2,<4
+winrt-Windows.Graphics.Imaging>=3.2,<4
+winrt-Windows.Media.Ocr>=3.2,<4
+winrt-Windows.Storage.Streams>=3.2,<4
+winrt-Windows.Foundation.Collections>=3.2,<4
+winrt-Windows.System>=3.2,<4
+winrt-Windows.Graphics.DirectX>=3.2,<4
+winrt-Windows.ApplicationModel>=3.2,<4
+winrt-Windows.Globalization>=3.2,<4

@@ -391,7 +391,7 @@ class SettingsWindow:
         for name, label in (("max_chars", "最多字数"), ("timeout", "请求超时 / 秒")):
             tk.Label(limits, text=label, background=theme.SURFACE, foreground=theme.INK, font=theme.font(10)).pack(side="left", padx=(0, 8))
             ttk.Entry(limits, textvariable=self.values[name], width=8, font=theme.font(10)).pack(side="left", padx=(0, 28))
-        self.note(privacy, "默认只读选区；兼容模式支持 WPS/PDF/Word 等文档应用，跳过可识别的密码框。临时复制可能进入系统剪贴板历史；自动划词遇到无法安全备份时会跳过，明确按 Alt+Q 时会继续读取但原剪贴板可能无法恢复。扫描件须先 OCR。手动读取当前选区：Alt+Q。关闭设置后继续后台运行；图解仅短期缓存在内存。", (12, 0))
+        self.note(privacy, "默认只读选区；兼容模式支持 WPS/PDF/Word 等文档应用，跳过可识别的密码框。临时复制可能进入系统剪贴板历史；两种触发方式都会先读选区，再尝试屏幕 OCR，最后才使用兼容复制；复杂剪贴板可能无法恢复。手动读取当前选区：Alt+Q。关闭设置后继续后台运行；图解仅短期缓存在内存。", (12, 0))
         status = tk.Frame(page, background=theme.PAPER)
         status.pack(fill="x", pady=(0, 12))
         tk.Label(status, text="◈", foreground=theme.ACCENT, background=theme.PAPER, font=theme.font(8)).pack(side="left", padx=(3, 8), pady=(2, 0))
