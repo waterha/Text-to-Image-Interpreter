@@ -3,6 +3,8 @@ import io
 
 from PIL import Image, ImageGrab
 
+from til.diagnostics import exception as log_exception
+
 
 def recognize_region(bounds, max_chars):
     left, top, right, bottom = map(int, bounds)
@@ -18,7 +20,8 @@ def recognize_region(bounds, max_chars):
         text = asyncio.run(_recognize_png(encoded.getvalue()))
         text = ' '.join(text.split())[:max_chars].strip() if text else ''
         return text if len(text) >= 2 else None
-    except Exception:
+    except Exception as error:
+        log_exception("screen OCR failed", error)
         return None
 
 
